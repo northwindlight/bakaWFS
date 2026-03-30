@@ -104,7 +104,7 @@ func DisableQuickEdit() {
 		// 现代终端，不提示，不处理
 		return
 	}
-
+	return
 	// 4. 关闭快速编辑（必须先加 EXTENDED_FLAGS）
 	newMode := mode | ENABLE_EXTENDED_FLAGS
 	newMode &^= ENABLE_QUICK_EDIT_MODE

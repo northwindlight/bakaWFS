@@ -72,7 +72,7 @@ createApp({
             
             try {
                 const res = await fetch(`${API_BASE}/verify`, {
-                    method: 'GET',
+                    method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
