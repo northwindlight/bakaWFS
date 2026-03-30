@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>⑨ 琪露诺的超级冰窖 ⑨</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="script.js" defer></script>
+    <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --cirno-light: #E1F5FE;
+            --cirno-blue: #03A9F4;
+            --cirno-dark: #0288D1;
+            --cirno-ice: rgba(255, 255, 255, 0.9);
+        }
+        body {
+            font-family: 'ZCOOL KuaiLe', cursive;
+            background: linear-gradient(180deg, #B3E5FC 0%, #E1F5FE 100%);
+            min-height: 100vh;
+            color: #1A237E;
+            -webkit-font-smoothing: antialiased;
+        }
+        .glass {
+            background: var(--cirno-ice);
+            backdrop-filter: blur(10px);
+            border-radius: 24px;
+            border: 2px solid white;
+            box-shadow: 0 8px 32px rgba(3, 169, 244, 0.15);
+        }
+        .baka-float {
+            animation: baka-float 4s ease-in-out infinite;
+        }
+        @keyframes baka-float {
+            0%, 100% { transform: translateY(0) rotate(0); }
+            50% { transform: translateY(-15px) rotate(5deg); }
+        }
+        .file-card:hover {
+            transform: scale(1.01);
+            background: rgba(255, 255, 255, 0.5);
+        }
+        /* 登录按钮样式 - 保持原有的好看样式 */
+        .login-btn {
+            background: linear-gradient(135deg, #4FC3F7 0%, #29B6F6 100%);
+            color: white;
+            border: 2px solid white;
+            box-shadow: 0 4px 12px rgba(41, 182, 246, 0.3);
+        }
+        .login-btn:hover {
+            background: linear-gradient(135deg, #29B6F6 0%, #0288D1 100%);
+            transform: translateY(-2px);
+        }
+        /* 下载按钮样式 - 淡蓝色圆角方框，透明背景 */
+        .download-btn {
+            background: transparent;
+            border: 2px solid #4FC3F7;
+            color: #0288D1;
+            font-weight: bold;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+        .download-btn:hover {
+            background: rgba(79, 195, 247, 0.1);
+            transform: translateY(-1px);
+        }
+        @keyframes dropDown {
+            from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+            to   { opacity: 1; transform: translateY(0)    scale(1); }
+        }
+        /* 隐藏滚动条 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-thumb { background: #81D4FA; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+<div id="app" class="max-w-5xl mx-auto">
+    
+    <header class="flex flex-col items-center mb-8 relative">
+        <div class="absolute -top-2 -right-2 md:right-0 md:top-0 transform scale-90 md:scale-100 origin-top-right z-10">
+            <button @click="isLoggedIn ? handleLogout() : (showLogin = !showLogin)"
+            class="login-btn group flex items-center gap-2 px-4 py-2 rounded-2xl transition-all duration-300">
+                <span class="text-xl group-hover:rotate-12 transition-transform">{{ isLoggedIn ? '❄️' : '🧊' }}</span>
+                <div class="flex flex-col items-start leading-none">
+                    <span class="text-[10px] opacity-50 tracking-widest uppercase">Identity</span>
+                    <span class="text-sm font-bold">{{ isLoggedIn ? currentUser : '点击登录 ⑨' }}</span>
+                </div>
+            </button>
+        </div>
+
+        <img src="baka.png" 
+            class="w-16 h-16 md:w-24 md:h-24 baka-float mb-2 transition-all duration-300" 
+            alt="baka">
+
+        <h1 class="text-2xl md:text-4xl lg:text-5xl font-black text-sky-700 tracking-tighter drop-shadow-sm text-center px-2">
+            ⑨ 琪露诺的超级冰窖 ⑨ 
+        </h1>
+        
+        <p class="text-sky-500 mt-2 text-xs md:text-sm">就算是笨蛋,也能保管好东西!</p>
+    </header>
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        <div v-if="showLogin && !isLoggedIn" class="lg:col-span-1">
+            <div class="glass p-6 sticky top-8">
+                <h3 class="text-xl mb-4 text-sky-800">你是谁?</h3>
+                <input v-model="loginForm.username" type="text" placeholder="名字" class="w-full mb-3 p-2 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-300 outline-none text-sm">
+                <input v-model="loginForm.password" type="password" placeholder="口令" class="w-full mb-4 p-2 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-300 outline-none text-sm">
+                <button @click="handleLogin" class="w-full bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">认领身份</button>
+            </div>
+        </div>
+
+        <div :class="(!isLoggedIn && showLogin) ? 'lg:col-span-3' : 'lg:col-span-4'">
+            <div class="glass min-h-[600px] flex flex-col">
+                
+                <nav class="p-3 border-b border-sky-50 flex items-center gap-2">
+                    <!-- 返回上一级 -->
+
+                    <button @click="goHome"
+                            class="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-sky-100/50 text-sky-600 text-lg hover:bg-sky-200 transition">
+                        🏠
+                    </button>
+
+                    <button @click="pathStack.length === 1 ? goHome() : goToLevel(pathStack.length - 2)"
+                            :disabled="pathStack.length === 0"
+                            class="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-sky-100/50 text-sky-600 font-bold text-lg hover:bg-sky-200 transition disabled:opacity-30 disabled:cursor-not-allowed">
+                        ←
+                    </button>
+                    
+
+                    <!-- 路径显示（不可点击，小字） -->
+                    <div class="flex-1 min-w-0 flex flex-col justify-center">
+                        <span class="text-[11px] text-sky-400 truncate select-none leading-tight" :title="'/' + pathStack.map(p => p.name).join('/')">
+                            <span class="opacity-60">/</span><span v-if="pathStack.length === 0" class="opacity-40">根目录</span><template v-for="(seg, i) in pathStack" :key="i"><span>{{ seg.name }}</span><span v-if="i < pathStack.length - 1" class="opacity-40">/</span></template>
+                        </span>
+                    </div>
+
+                    <!-- 上传 下拉按钮 -->
+                    <div class="relative shrink-0">
+                        <button @click="showUploadMenu = !showUploadMenu"
+                                class="flex items-center gap-1.5 bg-sky-500 text-white px-3 py-2 rounded-xl text-sm font-bold shadow-lg shadow-sky-200 hover:bg-sky-600 active:scale-95 transition select-none">
+                            <span>⬆ 上传</span>
+                            <span class="text-xs opacity-70 transition-transform duration-200" :class="showUploadMenu ? 'rotate-180' : ''">▼</span>
+                            <span v-if="Object.keys(progressData).length > 0" class="absolute -top-1 -right-1 flex h-2.5 w-2.5 rounded-full bg-red-500 border-2 border-white"></span>
+                        </button>
+
+                        <!-- 下拉菜单 -->
+                        <div v-if="showUploadMenu"
+                             class="absolute right-0 top-full mt-2 w-44 glass shadow-xl z-30 overflow-hidden rounded-2xl border border-white/80"
+                             style="animation: dropDown 0.15s ease-out">
+                            <!-- 本地上传 -->
+                            <label class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-sky-50 transition text-sky-700 font-bold text-sm border-b border-sky-50">
+                                <span class="text-lg">📂</span>
+                                <span>本地上传</span>
+                                <input type="file" @change="handleFileUpload($event); showUploadMenu = false" class="hidden">
+                            </label>
+                            <!-- 远程搬运 -->
+                            <button @click="openRemoteModal(); showUploadMenu = false"
+                                    class="w-full flex items-center gap-3 px-4 py-3 hover:bg-sky-50 transition text-sky-700 font-bold text-sm border-b border-sky-50">
+                                <span class="text-lg">🚀</span>
+                                <span>远程搬运</span>
+                            </button>
+                            <!-- 查看进度 -->
+                            <button @click="openProgressModal(); showUploadMenu = false"
+                                    class="w-full flex items-center gap-3 px-4 py-3 hover:bg-sky-50 transition text-sky-700 font-bold text-sm">
+                                <span class="text-lg">📋</span>
+                                <span>搬运动态</span>
+                                <span v-if="Object.keys(progressData).length > 0" class="ml-auto flex h-2 w-2 rounded-full bg-red-500"></span>
+                            </button>
+                        </div>
+                        <!-- 点击外部关闭 -->
+                        <div v-if="showUploadMenu" @click="showUploadMenu = false" class="fixed inset-0 z-20"></div>
+                    </div>
+                </nav>
+
+                <teleport to="body">
+                    <div v-if="showRemoteModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm">
+                        <div class="glass p-6 w-full max-w-md shadow-2xl">
+                            <h3 class="text-xl mb-4 text-sky-800 flex items-center gap-2">
+                                <span>🚀</span> 远程搬运请求
+                            </h3>
+                            <p class="text-xs text-sky-500 mb-4">琪露诺会顺着网线帮你把东西抓回来！</p>
+                            <input v-model="remoteUrl" type="text" placeholder="https://..." 
+                                class="w-full mb-4 p-3 rounded-xl border-none ring-2 ring-sky-100 focus:ring-sky-400 outline-none text-sm">
+                            <div class="flex gap-3">
+                                <button @click="showRemoteModal = false" class="flex-1 py-2 rounded-lg font-bold text-sky-400 hover:bg-sky-50 transition">算了</button>
+                                <button @click="submitRemoteUpload" class="flex-1 bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">开始搬运</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="showProgressModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm">
+                        <div class="glass w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+                            <div class="p-6 border-b border-sky-50 flex justify-between items-center">
+                                <h3 class="text-xl text-sky-800">正在搬运的任务</h3>
+                                <button @click="closeProgressModal" class="text-sky-300 hover:text-sky-600 text-2xl">×</button>
+                            </div>
+                            
+                            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                <div v-if="Object.keys(progressData).length === 0" class="text-center py-20 text-sky-300">
+                                    <p class="text-4xl mb-2">🧊</p>
+                                    <p>目前没有正在搬运的东西</p>
+                                </div>
+                                
+                                <div v-for="(info, taskId) in progressData" :key="taskId" class="bg-white/40 p-4 rounded-2xl mb-3 border border-white">
+                                    <div class="flex justify-between items-start mb-2">
+                                        <div class="flex-1 min-w-0 mr-4">
+                                            <span class="font-bold text-sky-800 truncate block" :title="info.filename">{{ info.displayName }}</span>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <span class="text-xs px-2 py-0.5 rounded-full bg-sky-100 text-sky-600">
+                                                    {{ info.username }}
+                                                </span>
+                                                <span v-if="info.type === 'remote'" class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">
+                                                    远程搬运
+                                                </span>
+                                                <span v-else-if="info.type === 'local'" class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-600">
+                                                    本地上传
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <button @click.stop="cancelTask(taskId)" class="text-sky-400 hover:text-red-500 text-xl leading-none ml-2 px-2" title="取消任务">✖</button>
+                                    </div>
+                                    
+                                    <div class="w-full h-3 bg-sky-100 rounded-full overflow-hidden p-0.5 border border-sky-50">
+                                        <div class="h-full bg-gradient-to-r from-sky-300 to-blue-500 rounded-full transition-all duration-1000"
+                                            :style="{ width: (info.downloadSize / info.expectedSize * 100) + '%' }">
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex justify-between mt-2 text-[10px] text-sky-400">
+                                        <span>{{ formatSize(info.downloadSize) }} / {{ formatSize(info.expectedSize) }}</span>
+                                        <span class="font-bold">{{ Math.round(info.downloadSize / info.expectedSize * 100) }}%</span>
+                                    </div>
+                                    
+                                    <div class="flex justify-between mt-1 text-[10px] text-sky-400">
+                                        <span class="truncate max-w-[200px]" :title="info.filename">{{ info.path }}</span>
+                                        <span>{{ formatSpeed(info.speed) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </teleport>
+
+                <div class="flex-1 p-2 overflow-y-auto">
+                    <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-sky-400">
+                        <div class="text-4xl animate-bounce">🧊</div>
+                        <p class="mt-4">琪露诺正在数数...</p>
+                    </div>
+
+                    <div v-else>
+                        <div v-for="item in sortedFiles" :key="item.name" 
+                            @click="handleItemClick(item)"
+                            class="file-card group flex items-center justify-between p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2 relative overflow-hidden">
+                            
+                            <div class="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
+                                
+                                <span class="text-2xl md:text-3xl shrink-0">
+                                    {{ item.type === 'dir' ? '📁' : fileTypeIcon(item.name) }}
+                                </span>
+
+                                <div class="flex flex-col min-w-0 pr-2">
+                                    <span class="text-slate-700 font-bold truncate text-sm md:text-base block">
+                                        {{ item.name }}
+                                    </span>
+                                    
+                                    <span class="text-[10px] text-slate-400 uppercase tracking-widest" v-if="item.type === 'file'">
+                                        {{ formatSize(item.size) }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="flex gap-2 items-center shrink-0 ml-2">
+                                <button v-if="item.type === 'file'" 
+                                        @click.stop="downloadFile(item.name)"
+                                        class="download-btn px-4 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap">
+                                    下载
+                                </button> 
+                            </div>
+                        </div>
+
+                        <div v-if="sortedFiles.length === 0" class="text-center py-32 opacity-20">
+                            <p class="text-6xl mb-4">空</p>
+                            <p>琪露诺把这里清空了</p>
+                        </div>
+                    </div>
+                </div>
+
+                <footer class="p-4 text-[10px] text-sky-300 flex justify-between border-t border-sky-50">
+                    <span>状态: 零下 {{ Math.floor(Math.random() * 9 + 1) }} 度</span>
+                    <span>BAKA BAKA</span>
+                </footer>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- ======= 文件查看器 ======= -->
+    <teleport to="body">
+        <div v-if="viewer.show" class="fixed inset-0 z-[200] flex items-center justify-center"
+            style="background:rgba(0,0,0,0.85);backdrop-filter:blur(4px)"
+            @click.self="closeViewer">
+
+            <!-- 图片查看器 -->
+            <template v-if="viewer.type === 'image'">
+            <div class="relative w-full h-full flex items-center justify-center"
+                @touchstart="onViewerTouchStart" @touchend="onViewerTouchEnd">
+                <!-- 关闭 -->
+                <button @click="closeViewer"
+                class="absolute top-4 right-4 z-10 text-white/70 hover:text-white text-4xl leading-none transition">×</button>
+                <!-- 计数 -->
+                <div class="absolute top-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-sm bg-black/30 px-3 py-1 rounded-full">
+                {{ viewerImageIndex + 1 }} / {{ viewerImageList.length }}
+                </div>
+                <!-- 文件名 -->
+                <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs bg-black/30 px-3 py-1 rounded-full max-w-[80vw] truncate">
+                {{ viewerImageList[viewerImageIndex]?.name }}
+                </div>
+                <!-- 图片 -->
+                <img :src="viewerCurrentImageUrl" :key="viewerCurrentImageUrl"
+                    class="max-h-screen max-w-screen object-contain select-none"
+                    style="max-height:90vh;max-width:90vw;"
+                    draggable="false">
+                <!-- 翻页按钮 -->
+                <button v-if="viewerImageIndex > 0" @click="viewerPrev"
+                class="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">‹</button>
+                <button v-if="viewerImageIndex < viewerImageList.length - 1" @click="viewerNext"
+                class="absolute right-2 md:right-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">›</button>
+            </div>
+            </template>
+
+            <!-- 视频播放器 -->
+            <template v-if="viewer.type === 'video'">
+            <div class="relative w-full max-w-4xl mx-4 flex flex-col items-center">
+                <button @click="closeViewer"
+                class="absolute -top-10 right-0 text-white/70 hover:text-white text-3xl leading-none transition">×</button>
+                <div class="text-white/60 text-sm mb-3 max-w-full truncate px-2">{{ viewerFileName }}</div>
+                <video :src="viewerVideoUrl" controls autoplay
+                    class="w-full rounded-2xl shadow-2xl"
+                    style="max-height:80vh;background:#000;">
+                你的浏览器不支持视频播放
+                </video>
+            </div>
+            </template>
+
+            <!-- 文本阅读器 -->
+            <template v-if="viewer.type === 'text'">
+            <div class="relative w-full max-w-3xl mx-4 flex flex-col"
+                style="max-height:85vh;">
+                <button @click="closeViewer"
+                class="absolute -top-10 right-0 text-white/70 hover:text-white text-3xl leading-none transition">×</button>
+                <div class="glass flex flex-col overflow-hidden" style="max-height:85vh;">
+                <div class="px-5 py-3 border-b border-sky-100 flex items-center justify-between shrink-0">
+                    <span class="font-bold text-sky-800 truncate max-w-[80%]">{{ viewerFileName }}</span>
+                    <span class="text-xs text-sky-400 ml-2 shrink-0">{{ viewerFileExt }} · {{ formatSize(viewerFileSize) }}</span>
+                </div>
+                <!-- 文件太大 -->
+                <div v-if="viewerTextTooLarge" class="flex flex-col items-center justify-center py-16 gap-4">
+                    <span class="text-5xl">📦</span>
+                    <p class="text-sky-600 font-bold">文件过大，无法预览</p>
+                    <p class="text-sky-400 text-sm">{{ formatSize(viewerFileSize) }} · 超过 10 KB 限制</p>
+                    <a :href="getFileUrl(viewerFileName)" :download="viewerFileName"
+                    class="download-btn px-6 py-2 text-sm mt-2 inline-block text-center rounded-xl">下载文件</a>
+                </div>
+                <!-- 加载中 -->
+                <div v-else-if="viewerLoading" class="flex items-center justify-center py-16">
+                    <div class="text-3xl animate-bounce">🧊</div>
+                </div>
+                <!-- 文本内容 -->
+                <div v-else class="overflow-y-auto flex-1 p-5">
+                    <pre class="text-sm text-slate-700 whitespace-pre-wrap break-words font-mono leading-relaxed">{{ viewerTextContent }}</pre>
+                </div>
+                </div>
+            </div>
+            </template>
+
+            <!-- 其他文件 -->
+            <template v-if="viewer.type === 'other'">
+            <div class="relative glass mx-4 p-8 flex flex-col items-center gap-5 min-w-[260px] max-w-sm w-full">
+                <button @click="closeViewer"
+                class="absolute top-3 right-4 text-sky-300 hover:text-sky-600 text-2xl leading-none transition">×</button>
+                <div class="text-6xl mt-2">{{ fileTypeIcon(viewerFileName) }}</div>
+                <div class="text-center">
+                <p class="font-bold text-sky-800 break-all text-sm leading-snug">{{ viewerFileName }}</p>
+                <p class="text-sky-400 text-xs mt-1">{{ viewerFileExt || '未知类型' }} · {{ formatSize(viewerFileSize) }}</p>
+                </div>
+                <a :href="getFileUrl(viewerFileName)" :download="viewerFileName"
+                @click="closeViewer"
+                class="download-btn px-8 py-2 text-sm mt-1 inline-block text-center rounded-xl w-full text-center">⬇ 下载</a>
+            </div>
+            </template>
+
+        </div>
+    </teleport>
+</div>
+
+</body>
+</html>

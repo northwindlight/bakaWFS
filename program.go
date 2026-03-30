@@ -1,0 +1,173 @@
+package main
+
+import (
+	"bakaWFS/internal/auth"
+	"bakaWFS/internal/config"
+	"bakaWFS/internal/handler"
+	"bakaWFS/internal/task"
+	"crypto/tls"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+
+	"github.com/lmittmann/tint"
+)
+
+func chain(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
+func printLogo(out io.Writer) {
+	logo := `
+ ____          _  __          
+|  _ \   /\   | |/ /   /\     
+| |_) | /  \  | ' /   /  \    
+|  _ < / /\ \ |  <   / /\ \   
+| |_) / ____ \| . \ / ____ \  
+|____/_/    \_\_|\_\_/    \_\ 
+__          __ ______  _____ 
+\ \        / /|  ____|/ ____|
+ \ \  /\  / / | |__  | (___  
+  \ \/  \/ /  |  __|  \___ \ 
+   \  /\  /   | |     ____) |
+    \/  \/    |_|    |_____/
+`
+	fmt.Fprintf(out, "%s%s%s\n", "\033[36m", logo, "\033[0m")
+}
+
+func main() {
+	output := setupOutput()
+	logger := slog.New(tint.NewHandler(output, &tint.Options{
+		TimeFormat: "15:04:05",
+	}))
+
+	// ── 配置加载 ────────────────────────────────────────────
+	cfgPath := filepath.Join(".", "config.yaml")
+	if err := config.EnsureConfig(cfgPath); err != nil {
+		// 首次运行：默认配置已写入，提示用户编辑后重启
+		fmt.Println(err)
+		waitAndExit()
+	}
+	cfg, err := config.LoadYAML[config.Config](cfgPath)
+	if err != nil {
+		logger.Error("加载配置失败", "error", err)
+		waitAndExit()
+	}
+	if err := cfg.Validate(); err != nil {
+		logger.Error("配置校验失败", "error", err)
+		waitAndExit()
+	}
+
+	if err := config.EnsureUsersConfig(cfg.UsersPath); err != nil {
+		fmt.Println(err)
+		waitAndExit()
+	}
+	usersCfg, err := config.LoadYAML[config.UsersConfig](cfg.UsersPath)
+	if err != nil {
+		logger.Error("加载用户配置失败", "error", err)
+		waitAndExit()
+	}
+	logger.Info("配置加载成功", "address", cfg.Address, "port", cfg.Port,
+		"download_workers", cfg.DownloadWorkers)
+
+	cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
+	if err != nil {
+		logger.Error("加载证书失败", "error", err)
+		waitAndExit()
+	}
+	logger.Info("加载证书成功", "cert", cfg.CertPath, "key", cfg.KeyPath)
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	tempDir := filepath.Join(".", cfg.TempDir)
+	if err := cleanTempDir(tempDir, logger); err != nil {
+		logger.Error("清理临时目录失败", "error", err)
+		waitAndExit()
+	}
+
+	// ── 依赖组装 ────────────────────────────────────────────
+	authSvc := auth.NewAuth(cfg, usersCfg)
+	tasks := task.NewTaskManager()
+	downloader := task.NewDownloader(tasks, cfg.DownloadWorkers, logger)
+	downloader.Start()
+
+	ah := handler.NewAuthHandler(authSvc, logger)
+	fh := handler.NewFileHandler(cfg, logger, tasks, downloader)
+
+	authMW := handler.AuthMiddleware(authSvc, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/node", fh.HandleNode)
+	mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
+	mux.HandleFunc("/login", ah.HandleLogin)
+	mux.HandleFunc("/update", authMW(fh.HandleUpload))
+	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
+	mux.HandleFunc("/remote-upload", authMW(fh.HandleRemoteUpload))
+	mux.HandleFunc("/progress", authMW(fh.HandleProgress))
+	mux.HandleFunc("/cancel", authMW(fh.HandleCancel))
+	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, logger))
+	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, logger))
+
+	globalHandler := chain(
+		mux,
+		handler.RequestLogger(logger),
+		handler.CORSMiddleware,
+		handler.StatusOK,
+	)
+	server := &http.Server{
+		Addr:      fmt.Sprintf("%s:%d", cfg.Address, cfg.Port),
+		TLSConfig: tlsConfig,
+		Handler:   globalHandler,
+	}
+
+	printLogo(output)
+	logger.Info("baka文件服务器已启动")
+	if err := server.ListenAndServeTLS("", ""); err != nil {
+		logger.Error("服务器启动失败", "error", err)
+		waitAndExit()
+	}
+}
+
+// cleanTempDir 删除 tempDir 下的所有 .tmp 文件（上次崩溃或强制退出的残留），
+// 然后确保目录存在。
+func cleanTempDir(dir string, logger *slog.Logger) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("读取临时目录失败: %w", err)
+	}
+	cleaned := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if err := os.Remove(p); err != nil {
+			logger.Warn("清理临时文件失败", "file", p, "error", err)
+		} else {
+			cleaned++
+		}
+	}
+	if cleaned > 0 {
+		logger.Info("已清理上次残留临时文件", "count", cleaned, "dir", dir)
+	}
+	return nil
+}
+
+// waitAndExit 打印提示后等待 Ctrl+C，避免控制台窗口直接关闭看不到错误信息。
+func waitAndExit() {
+	fmt.Println("\n按 Ctrl+C 退出")
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	<-sigChan
+	os.Exit(1)
+}
