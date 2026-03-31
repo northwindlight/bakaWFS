@@ -127,12 +127,6 @@ func (r *statusRecorder) WriteHeader(status int) {
 }
 
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
-	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return ip
 }

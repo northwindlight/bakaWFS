@@ -48,7 +48,6 @@ func (a *Auth) VerifyToken(tokenStr string) (string, error) {
 	return "", errors.New("无效的令牌")
 }
 
-// RefreshToken 验证旧 token，有效则签发新的 24h token。
 func (a *Auth) RefreshToken(username string) (string, error) {
 	return a.generateToken(username)
 }

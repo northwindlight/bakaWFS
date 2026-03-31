@@ -32,12 +32,11 @@ type UsersConfig struct {
 // defaultConfig 是首次启动时写入磁盘的模板，所有字段都有合理默认值。
 // Secret 留空，提示用户必须手动填写。
 var defaultConfig = `# baka-file-server 配置文件
-# 首次启动自动生成，请按需修改
 
 address: "0.0.0.0"
 port: 443
 
-# JWT 签名密钥，必须修改为随机字符串，留空则启动失败
+# JWT 签名密钥，必须修改为随机字符串
 secret: ""
 
 cert_path: "certificate.crt"
@@ -52,7 +51,7 @@ users_file: "users.yaml"
 download_workers: 2
 `
 
-var defaultUsersConfig = `# 用户列表，密码建议使用哈希值
+var defaultUsersConfig = `
 users:
   - username: "admin"
     password: "changeme"

@@ -56,5 +56,3 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(dto.JwtClaims{Username: username, Token: newToken})
 	h.logger.Info("token 续签成功", "username", username)
 }
-
-// ExtractToken 从 Authorization header 或 query param 提取 token。
