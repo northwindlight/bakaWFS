@@ -112,8 +112,8 @@ func main() {
 	mux.HandleFunc("/remote-upload", authMW(fh.HandleRemoteUpload))
 	mux.HandleFunc("/progress", authMW(fh.HandleProgress))
 	mux.HandleFunc("/cancel", authMW(fh.HandleCancel))
-	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, logger))
-	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, logger))
+	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
+	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 
 	globalHandler := chain(
 		mux,
@@ -135,8 +135,7 @@ func main() {
 	}
 }
 
-// cleanTempDir 删除 tempDir 下的所有 .tmp 文件（上次崩溃或强制退出的残留），
-// 然后确保目录存在。
+// cleanTempDir 删除 tempDir 下的所有 .tmp 文件
 func cleanTempDir(dir string, logger *slog.Logger) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %w", err)

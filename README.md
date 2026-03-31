@@ -6,7 +6,7 @@
 
 代码中，尤其是前端，使用了大量ai生成代码，大概40%左右。
 
-服务端配置了CORS中间件（不需要则修改program.go的中间件链），允许自行编写前端或者cli工具。
+服务端配置了CORS中间件（需要取消program.go中间件链的注释），允许自行编写前端或者cli工具。
 
 ## 功能
 
@@ -41,7 +41,7 @@ secret: ""
 cert_path: "certificate.crt"
 key_path:  "private.key"
 file_dir:   "files"
-html_dir:   "html"
+html_dir:   "built-in"       #你也可以自己写一个漂亮的前端，换成你的html文件夹路径即可（默认加载文件夹中的index.html）
 temp_dir:   ".uploads"
 users_file: "users.yaml"
 download_workers: 2          # 并发远程下载 worker 数
@@ -51,8 +51,8 @@ download_workers: 2          # 并发远程下载 worker 数
 
 ```yaml
 users:
-  - username: "admin"
-    password: "changeme"
+  - username: "baka"
+    password: "bakabaka"
 ```
 
 ## API
@@ -97,6 +97,7 @@ users:
 |---|---|
 | [golang-jwt](https://github.com/golang-jwt/jwt) | 提供jwt认证 |
 | [xxhash](https://github.com/cespare/xxhash) | 未实装，可能用来提供文件校验 |
+| [go-colorable](https://github.com/mattn/go-colorable) | Windowscli颜色问题正在解决中 |
 
 ---
 

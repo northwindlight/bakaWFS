@@ -1,5 +1,4 @@
 # baka-file-server 配置文件
-# 首次启动自动生成，请按需修改
 
 address: "0.0.0.0"
 port: 443

@@ -3,6 +3,8 @@ package handler
 import (
 	"bakaWFS/internal/auth"
 	"context"
+	"embed"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -26,8 +28,20 @@ func FileServerHandler(fs http.Handler) http.HandlerFunc {
 }
 
 // HtmlFileServerHandler 服务 html 目录，根路径重定向到 index.html。
-func HtmlFileServerHandler(htmlDir string, logger *slog.Logger) http.HandlerFunc {
-	fs := http.FileServer(http.Dir(htmlDir))
+func HtmlFileServerHandler(htmlDir string, embedded embed.FS, logger *slog.Logger) http.HandlerFunc {
+	var fsys http.FileSystem
+
+	if htmlDir == "built-in" || htmlDir == "internal" {
+		sub, err := fs.Sub(embedded, "html")
+		if err != nil {
+			panic("embedded html not found: " + err.Error())
+		}
+		fsys = http.FS(sub)
+	} else {
+		fsys = http.Dir(htmlDir)
+	}
+
+	fs := http.FileServer(fsys)
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -113,8 +127,6 @@ func StatusOK(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-// ── 内部辅助 ────────────────────────────────────────────────
 
 type statusRecorder struct {
 	http.ResponseWriter
