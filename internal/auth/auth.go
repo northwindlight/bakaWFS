@@ -49,11 +49,7 @@ func (a *Auth) VerifyToken(tokenStr string) (string, error) {
 }
 
 // RefreshToken 验证旧 token，有效则签发新的 24h token。
-func (a *Auth) RefreshToken(tokenStr string) (string, error) {
-	username, err := a.VerifyToken(tokenStr)
-	if err != nil {
-		return "", err
-	}
+func (a *Auth) RefreshToken(username string) (string, error) {
 	return a.generateToken(username)
 }
 

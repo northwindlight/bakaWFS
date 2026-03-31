@@ -56,7 +56,7 @@ func (h *FileHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Header.Get("X-Username")
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
 	urlFilename := r.Header.Get("X-Upload-Filename")
 	sizeStr := r.Header.Get("Content-Length")
 
@@ -101,8 +101,6 @@ func (h *FileHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.tasks.Remove(filename)
-
-	h.tasks.UpdateProgress(filename, 0, expectedSize)
 
 	tempPath := filepath.Join(h.cfg.TempDir, fmt.Sprintf("%d-%s.tmp", time.Now().UnixNano(), username))
 	tempFile, err := os.Create(tempPath)
@@ -152,7 +150,7 @@ func (h *FileHandler) HandleRemoteUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	username := r.Header.Get("X-Username")
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
 
 	var req struct {
 		URL      string `json:"url"`

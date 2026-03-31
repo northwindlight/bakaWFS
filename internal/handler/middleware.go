@@ -2,11 +2,17 @@ package handler
 
 import (
 	"bakaWFS/internal/auth"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
+
+type contextKey string
+
+const ContextKeyUsername contextKey = "username"
 
 // FileServerHandler 限制只允许 GET。
 func FileServerHandler(fs http.Handler) http.HandlerFunc {
@@ -39,11 +45,11 @@ func HtmlFileServerHandler(htmlDir string, logger *slog.Logger) http.HandlerFunc
 	}
 }
 
-// AuthMiddleware 验证 JWT，通过后把 username 写入 X-Username header。
+// AuthMiddleware 验证 JWT。
 func AuthMiddleware(authSvc *auth.Auth, logger *slog.Logger) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			tokenString := ExtractToken(r)
+			tokenString := extractToken(r)
 			if tokenString == "" {
 				http.Error(w, "Unauthorized: missing token", http.StatusUnauthorized)
 				logger.Warn("请求缺少 token", "ip", clientIP(r), "path", r.URL.Path)
@@ -55,8 +61,8 @@ func AuthMiddleware(authSvc *auth.Auth, logger *slog.Logger) func(http.HandlerFu
 				logger.Warn("无效 token", "ip", clientIP(r), "path", r.URL.Path, "error", err)
 				return
 			}
-			r.Header.Set("X-Username", username)
-			next(w, r)
+			ctx := context.WithValue(r.Context(), ContextKeyUsername, username)
+			next(w, r.WithContext(ctx))
 		}
 	}
 }
@@ -129,4 +135,15 @@ func clientIP(r *http.Request) string {
 	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return ip
+}
+
+func extractToken(r *http.Request) string {
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 && parts[0] == "Bearer" {
+			return parts[1]
+		}
+		return authHeader
+	}
+	return r.URL.Query().Get("token")
 }

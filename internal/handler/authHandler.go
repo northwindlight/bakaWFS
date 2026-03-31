@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"strings"
 )
 
 type AuthHandler struct {
@@ -47,30 +46,15 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	tokenString := ExtractToken(r)
-	if tokenString == "" {
-		http.Error(w, "Unauthorized: missing token", http.StatusUnauthorized)
-		return
-	}
-	newToken, err := h.auth.RefreshToken(tokenString)
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	newToken, err := h.auth.RefreshToken(username)
 	if err != nil {
 		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
 		h.logger.Warn("token 续签失败", "error", err)
 		return
 	}
-	username, _ := h.auth.VerifyToken(newToken)
 	json.NewEncoder(w).Encode(dto.JwtClaims{Username: username, Token: newToken})
 	h.logger.Info("token 续签成功", "username", username)
 }
 
 // ExtractToken 从 Authorization header 或 query param 提取 token。
-func ExtractToken(r *http.Request) string {
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) == 2 && parts[0] == "Bearer" {
-			return parts[1]
-		}
-		return authHeader
-	}
-	return r.URL.Query().Get("token")
-}

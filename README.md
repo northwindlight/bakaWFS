@@ -1,8 +1,8 @@
 # baka-web-file-server
 
-一个简单的自托管文件服务器，HTTPS + JWT 鉴权，支持上传、远程下载和进度追踪。提供参考配套前端，独立部署。
+一个简单的自托管文件服务器，HTTPS + JWT 鉴权，支持上传、远程下载和进度追踪。提供参考配套前端，简单且易于部署。
 
-这是类似filebowser的go程序，可以追溯到很久以前的一个goapi项目，目前尚在重构，正在持续更新。
+这是类似filebrowser的go程序，可以追溯到很久以前我的一个goapi项目，目前尚在重构，正在持续更新。
 
 代码中，尤其是前端，使用了大量ai生成代码，大概40%左右。
 
@@ -69,6 +69,7 @@ users:
 | POST | `/cancel?filename=` | 取消下载任务 | 是 |
 
 鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
+
 所有api格式均在dto/json中，目前api风格不一致，且缺乏文档，会持续改进
 
 ## 项目结构
