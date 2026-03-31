@@ -92,7 +92,6 @@ func main() {
 		waitAndExit()
 	}
 
-	// ── 依赖组装 ────────────────────────────────────────────
 	authSvc := auth.NewAuth(cfg, usersCfg)
 	tasks := task.NewTaskManager()
 	downloader := task.NewDownloader(tasks, cfg.DownloadWorkers, logger)
@@ -118,7 +117,7 @@ func main() {
 	globalHandler := chain(
 		mux,
 		handler.RequestLogger(logger),
-		handler.CORSMiddleware,
+		//handler.CORSMiddleware,
 		handler.StatusOK,
 	)
 	server := &http.Server{

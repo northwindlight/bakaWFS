@@ -14,6 +14,15 @@
 - 远程 URL 下载到服务器
 - JWT 登录鉴权 + token 续签
 
+## 预览
+
+![主页](assets/index.jpeg)
+
+![文件浏览](assets/browser.jpeg)
+
+![下载任务](assets/download.jpeg)
+
+
 ## 快速开始
 
 准备好 TLS 证书后直接运行：
