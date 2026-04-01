@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -49,7 +50,6 @@ func main() {
 		TimeFormat: "15:04:05",
 	}))
 
-	// ── 配置加载 ────────────────────────────────────────────
 	cfgPath := filepath.Join(".", "config.yaml")
 	if err := config.EnsureConfig(cfgPath); err != nil {
 		// 首次运行：默认配置已写入，提示用户编辑后重启
@@ -75,16 +75,20 @@ func main() {
 		logger.Error("加载用户配置失败", "error", err)
 		waitAndExit()
 	}
-	logger.Info("配置加载成功", "address", cfg.Address, "port", cfg.Port,
+	logger.Info("配置加载成功", "address", cfg.Address,
+		"https_port", cfg.HttpsPort, "http_port", cfg.HttpPort,
 		"download_workers", cfg.DownloadWorkers)
 
-	cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
-	if err != nil {
-		logger.Error("加载证书失败", "error", err)
-		waitAndExit()
+	var tlsConfig *tls.Config
+	if cfg.HttpsEnabled() {
+		cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
+		if err != nil {
+			logger.Error("加载证书失败", "error", err)
+			waitAndExit()
+		}
+		logger.Info("加载证书成功", "cert", cfg.CertPath, "key", cfg.KeyPath)
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
 	}
-	logger.Info("加载证书成功", "cert", cfg.CertPath, "key", cfg.KeyPath)
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
 
 	tempDir := filepath.Join(".", cfg.TempDir)
 	if err := cleanTempDir(tempDir, logger); err != nil {
@@ -120,15 +124,66 @@ func main() {
 		//handler.CORSMiddleware,
 		handler.StatusOK,
 	)
-	server := &http.Server{
-		Addr:      fmt.Sprintf("%s:%d", cfg.Address, cfg.Port),
-		TLSConfig: tlsConfig,
-		Handler:   globalHandler,
-	}
-
 	printLogo(output)
 	logger.Info("baka文件服务器已启动")
-	if err := server.ListenAndServeTLS("", ""); err != nil {
+
+	errCh := make(chan error, 2)
+
+	if cfg.HttpsEnabled() {
+		httpsAddr := fmt.Sprintf("%s:%d", cfg.Address, cfg.HttpsPort)
+		httpsServer := &http.Server{
+			Addr:      httpsAddr,
+			TLSConfig: tlsConfig,
+			Handler:   globalHandler,
+		}
+		logger.Info("HTTPS 已启动", "addr", httpsAddr)
+		go func() {
+			if err := httpsServer.ListenAndServeTLS("", ""); err != nil {
+				errCh <- fmt.Errorf("HTTPS 服务器错误: %w", err)
+			}
+		}()
+	}
+
+	if cfg.HttpEnabled() {
+		httpAddr := fmt.Sprintf("%s:%d", cfg.Address, cfg.HttpPort)
+		var httpHandler http.Handler
+		if cfg.HttpsEnabled() {
+			// 两者同时开启：HTTP 重定向到 HTTPS
+			var target string
+			httpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				host, _, err := net.SplitHostPort(r.Host)
+				if err != nil {
+					host = r.Host
+				}
+				if cfg.HttpsPort == 443 {
+					target = fmt.Sprintf("https://%s%s", host, r.RequestURI)
+				} else {
+					target = fmt.Sprintf("https://%s:%d%s", host, cfg.HttpsPort, r.RequestURI)
+				}
+				if r.URL.RawQuery != "" {
+					target += "?" + r.URL.RawQuery
+				}
+
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+			})
+			logger.Info("HTTP 已启动，自动重定向HTTPS", "addr", httpAddr)
+		} else {
+			// 仅 HTTP
+			httpHandler = globalHandler
+			logger.Info("HTTP 已启动", "addr", httpAddr)
+		}
+		httpServer := &http.Server{
+			Addr:    httpAddr,
+			Handler: httpHandler,
+		}
+		go func() {
+			if err := httpServer.ListenAndServe(); err != nil {
+				errCh <- fmt.Errorf("HTTP 服务器错误: %w", err)
+			}
+		}()
+	}
+
+	if err := <-errCh; err != nil {
 		logger.Error("服务器启动失败", "error", err)
 		waitAndExit()
 	}

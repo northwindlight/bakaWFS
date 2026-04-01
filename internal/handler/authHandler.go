@@ -30,7 +30,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	token, err := h.auth.Login(creds)
+	token, err := h.auth.Login(creds, r.Header.Get("User-Agent"))
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		h.logger.Warn("用户登录失败", "username", creds.Username)
@@ -47,7 +47,8 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username, _ := r.Context().Value(ContextKeyUsername).(string)
-	newToken, err := h.auth.RefreshToken(username)
+	token, _ := r.Context().Value(ContextKeyToken).(string)
+	newToken, err := h.auth.RefreshToken(token)
 	if err != nil {
 		http.Error(w, "Unauthorized: invalid or expired token", http.StatusUnauthorized)
 		h.logger.Warn("token 续签失败", "error", err)

@@ -25,13 +25,20 @@
 
 ## 快速开始
 
-准备好 TLS 证书后直接运行：
+直接运行：
 
 ```bash
 ./bakaWFS
 ```
 
 首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`，编辑后重新启动。
+
+启用TLS需要自己准备证书。没有启用TLS的情况下，不要在公网环境测试，极其不安全。
+
+```yaml
+cert_path: "certificate.crt" #证书
+key_path:  "private.key"     #私钥
+```
 
 **必须修改的字段：**
 
@@ -44,8 +51,9 @@ secret: "替换为随机字符串"   # 作为jwt的密钥
 `config.yaml`：
 
 ```yaml
-address: "0.0.0.0"
-port: 443
+address: "0.0.0.0" 
+https_port: 443 # 端口设为 -1 表示关闭该协议。两者同时开启时，HTTP 会重定向到 HTTPS。
+http_port:  80
 secret: ""
 cert_path: "certificate.crt"
 key_path:  "private.key"
@@ -79,7 +87,7 @@ users:
 
 鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
 
-所有api格式均在dto/json中，目前api风格不一致，且缺乏文档，会持续改进
+所有api格式均在dto/json中，目前api风格不一致，且缺乏文档，会持续改进。
 
 ## 项目结构
 

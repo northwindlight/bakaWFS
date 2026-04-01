@@ -7,9 +7,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// PortDisabled 表示该端口已关闭，配置为 -1 即可。
+const PortDisabled = -1
+
 type Config struct {
 	Address         string `yaml:"address"`
-	Port            int    `yaml:"port"`
+	HttpsPort       int    `yaml:"https_port"`
+	HttpPort        int    `yaml:"http_port"`
 	Secret          string `yaml:"secret"`
 	CertPath        string `yaml:"cert_path"`
 	KeyPath         string `yaml:"key_path"`
@@ -19,6 +23,10 @@ type Config struct {
 	TempDir         string `yaml:"temp_dir"`
 	DownloadWorkers int    `yaml:"download_workers"`
 }
+
+func (c *Config) HttpsEnabled() bool { return c.HttpsPort != PortDisabled }
+
+func (c *Config) HttpEnabled() bool { return c.HttpPort != PortDisabled }
 
 type User struct {
 	Username string `yaml:"username" json:"username"`
@@ -33,7 +41,10 @@ type UsersConfig struct {
 var defaultConfig = `# baka-file-server 配置文件
 
 address: "0.0.0.0"
-port: 443
+
+# 端口设为 -1 表示关闭该协议。两者同时开启时，HTTP 会重定向到 HTTPS。
+https_port: 443
+http_port:  80
 
 # JWT 签名密钥
 secret: ""
@@ -43,7 +54,7 @@ key_path:  "private.key"
 
 file_dir:   "files"
 
-#built-in和internal表示使用内置html
+# built-in 和 internal 表示使用内置 html
 html_dir:   "built-in"
 temp_dir:   ".uploads"
 users_file: "users.yaml"
@@ -94,6 +105,9 @@ func EnsureUsersConfig(path string) error {
 func (c *Config) Validate() error {
 	if c.Secret == "" {
 		return fmt.Errorf("config.yaml 中 secret 不能为空，请设置一个随机字符串")
+	}
+	if c.HttpsPort == c.HttpPort {
+		return fmt.Errorf("https_port 和 http_port 不能使用相同端口，或者同时关闭")
 	}
 	if c.DownloadWorkers <= 0 {
 		c.DownloadWorkers = 1

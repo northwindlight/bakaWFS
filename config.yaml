@@ -1,7 +1,8 @@
 # baka-file-server 配置文件
 
 address: "0.0.0.0"
-port: 443
+https_port: 443 # 端口设为 -1 表示关闭该协议。两者同时开启时，HTTP 会重定向到 HTTPS。
+http_port:  80
 
 # JWT 签名密钥，必须修改为随机字符串，留空则启动失败
 secret: ""

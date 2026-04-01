@@ -15,6 +15,7 @@ import (
 type contextKey string
 
 const ContextKeyUsername contextKey = "username"
+const ContextKeyToken contextKey = "token"
 
 // FileServerHandler 限制只允许 GET。
 func FileServerHandler(fs http.Handler) http.HandlerFunc {
@@ -69,13 +70,14 @@ func AuthMiddleware(authSvc *auth.Auth, logger *slog.Logger) func(http.HandlerFu
 				logger.Warn("请求缺少 token", "ip", clientIP(r), "path", r.URL.Path)
 				return
 			}
-			username, err := authSvc.VerifyToken(tokenString)
+			username, err := authSvc.VerifyToken(tokenString, r.Header.Get("User-Agent"))
 			if err != nil {
 				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 				logger.Warn("无效 token", "ip", clientIP(r), "path", r.URL.Path, "error", err)
 				return
 			}
 			ctx := context.WithValue(r.Context(), ContextKeyUsername, username)
+			ctx = context.WithValue(ctx, ContextKeyToken, tokenString)
 			next(w, r.WithContext(ctx))
 		}
 	}
