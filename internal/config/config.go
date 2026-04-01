@@ -1,8 +1,11 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -37,17 +40,17 @@ type UsersConfig struct {
 	Users []User `yaml:"users"`
 }
 
-// defaultConfig 是首次启动时写入磁盘的模板
-var defaultConfig = `# baka-file-server 配置文件
+// defaultConfigTemplate 是首次启动时写入磁盘的模板，%%SECRET%% 会被随机密钥替换
+var defaultConfigTemplate = `# baka-file-server 配置文件
 
 address: "0.0.0.0"
 
 # 端口设为 -1 表示关闭该协议。两者同时开启时，HTTP 会重定向到 HTTPS。
-https_port: 443
-http_port:  80
+https_port: -1
+http_port:  8080
 
 # JWT 签名密钥
-secret: ""
+secret: "%%SECRET%%"
 
 cert_path: "certificate.crt"
 key_path:  "private.key"
@@ -69,6 +72,15 @@ users:
     password: "baka"
 `
 
+// generateSecret 生成 16 字节（32位十六进制）随机密钥
+func generateSecret() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("生成随机密钥失败: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
 // LoadYAML 读取并解析指定路径的 YAML 文件。
 func LoadYAML[T any](path string) (T, error) {
 	var cfg T
@@ -83,13 +95,15 @@ func LoadYAML[T any](path string) (T, error) {
 }
 
 func EnsureConfig(path string) error {
-	if _, err := os.Stat(path); err == nil {
-		return nil
+	secret, err := generateSecret()
+	if err != nil {
+		return err
 	}
-	if err := os.WriteFile(path, []byte(defaultConfig), 0644); err != nil {
+	content := strings.ReplaceAll(defaultConfigTemplate, "%%SECRET%%", secret)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("写入默认配置失败: %w", err)
 	}
-	return ErrCreatedDefault
+	return nil
 }
 
 func EnsureUsersConfig(path string) error {
@@ -99,7 +113,7 @@ func EnsureUsersConfig(path string) error {
 	if err := os.WriteFile(path, []byte(defaultUsersConfig), 0644); err != nil {
 		return fmt.Errorf("写入默认用户配置失败: %w", err)
 	}
-	return ErrCreatedDefault
+	return nil
 }
 
 func (c *Config) Validate() error {
@@ -114,11 +128,3 @@ func (c *Config) Validate() error {
 	}
 	return nil
 }
-
-type createdDefaultError struct{}
-
-func (e createdDefaultError) Error() string {
-	return "配置文件不存在，已自动创建默认配置，请编辑后重新启动"
-}
-
-var ErrCreatedDefault error = createdDefaultError{}

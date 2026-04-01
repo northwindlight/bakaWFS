@@ -49,13 +49,15 @@ func main() {
 	logger := slog.New(tint.NewHandler(output, &tint.Options{
 		TimeFormat: "15:04:05",
 	}))
-
 	cfgPath := filepath.Join(".", "config.yaml")
-	if err := config.EnsureConfig(cfgPath); err != nil {
-		// 首次运行：默认配置已写入，提示用户编辑后重启
-		fmt.Println(err)
-		waitAndExit()
+	if _, err := os.Stat(cfgPath); err != nil {
+		logger.Warn("配置文件不存在，已生成默认配置，生产环境请修改默认配置文件", "默认路径:", cfgPath)
+		if err := config.EnsureConfig(cfgPath); err != nil {
+			logger.Error("初始化配置失败", "error", err)
+			waitAndExit()
+		}
 	}
+
 	cfg, err := config.LoadYAML[config.Config](cfgPath)
 	if err != nil {
 		logger.Error("加载配置失败", "error", err)
@@ -66,15 +68,20 @@ func main() {
 		waitAndExit()
 	}
 
-	if err := config.EnsureUsersConfig(cfg.UsersPath); err != nil {
-		fmt.Println(err)
-		waitAndExit()
+	if _, err := os.Stat(cfg.UsersPath); err != nil {
+		logger.Warn("用户配置文件不存在，已生成默认配置，请迅速修改密码，如果在公网环境，请配置HTTPS", "用户配置路径:", cfg.UsersPath)
+		if err := config.EnsureUsersConfig(cfg.UsersPath); err != nil {
+			logger.Error("初始化用户配置失败", "error", err)
+			waitAndExit()
+		}
 	}
+
 	usersCfg, err := config.LoadYAML[config.UsersConfig](cfg.UsersPath)
 	if err != nil {
 		logger.Error("加载用户配置失败", "error", err)
 		waitAndExit()
 	}
+
 	logger.Info("配置加载成功", "address", cfg.Address,
 		"https_port", cfg.HttpsPort, "http_port", cfg.HttpPort,
 		"download_workers", cfg.DownloadWorkers)
@@ -168,7 +175,6 @@ func main() {
 			})
 			logger.Info("HTTP 已启动，自动重定向HTTPS", "addr", httpAddr)
 		} else {
-			// 仅 HTTP
 			httpHandler = globalHandler
 			logger.Info("HTTP 已启动", "addr", httpAddr)
 		}
@@ -216,7 +222,6 @@ func cleanTempDir(dir string, logger *slog.Logger) error {
 	return nil
 }
 
-// waitAndExit 打印提示后等待 Ctrl+C，避免控制台窗口直接关闭看不到错误信息。
 func waitAndExit() {
 	fmt.Println("\n按 Ctrl+C 退出")
 	sigChan := make(chan os.Signal, 1)
