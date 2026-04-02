@@ -319,11 +319,11 @@ createApp({
             if (IMAGE_EXTS.has(ext)) return '🖼️';
             if (VIDEO_EXTS.has(ext)) return '🎬';
             if (TEXT_EXTS.has(ext))  return '📝';
-            const m = {'pdf':'📕','zip':'🗜️','rar':'🗜️','7z':'🗜️','tar':'🗜️','gz':'🗜️',
+            const m = {'pdf':'📕','zip':'📦','rar':'📦','7z':'📦','tar':'📦','gz':'📦','xz':'📦',
                        'exe':'⚙️','dmg':'💿','iso':'💿','apk':'📱',
                        'doc':'📘','docx':'📘','xls':'📗','xlsx':'📗','ppt':'📙','pptx':'📙',
                        'mp3':'🎵','flac':'🎵','wav':'🎵','aac':'🎵'};
-            return m[ext] || '📦';
+            return m[ext] || '🗂️';
         };
 
 
