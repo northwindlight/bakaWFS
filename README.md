@@ -113,7 +113,7 @@ users:
 | 依赖 | 说明 |
 |---|---|
 | [golang-jwt](https://github.com/golang-jwt/jwt) | 提供jwt认证 |
-| [xxhash](https://github.com/cespare/xxhash) | 未实装，可能用来提供文件校验 |
+| [xxhash](https://github.com/cespare/xxhash) | 未实装，用来提供切片上传的文件校验，目前还在开发中 |
 | [go-colorable](https://github.com/mattn/go-colorable) | Windowscli颜色问题正在解决中 |
 
 ---
