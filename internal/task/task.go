@@ -11,163 +11,61 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// ── 任务类型 ────────────────────────────────────────────────
+// ── 进度快照（对外只读） ─────────────────────────────────────
 
-type TaskType string
-
-const (
-	TaskUpload   TaskType = "upload"
-	TaskDownload TaskType = "download"
-)
-
-// Task 代表一个正在进行的上传或下载任务。
-type Task struct {
-	Filename   string
+type DownloadProgress struct {
 	Username   string
-	Type       TaskType
-	Downloaded int64
-	TotalSize  int64 // -1 表示未知
-	cancel     context.CancelFunc
+	downloaded atomic.Int64
+	totalSize  atomic.Int64
 }
 
-// ── TaskManager ─────────────────────────────────────────────
-
-// TaskManager 管理所有进行中的任务，是唯一的并发状态持有者。
-type TaskManager struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
+func (p *DownloadProgress) Update(downloaded, total int64) {
+	p.downloaded.Store(downloaded)
+	p.totalSize.Store(total)
 }
 
-func NewTaskManager() *TaskManager {
-	return &TaskManager{
-		tasks: make(map[string]*Task),
-	}
-}
-
-// TryAdd 尝试注册任务，如果同名任务已存在则返回 false（幂等保护）。
-func (m *TaskManager) TryAdd(filename, username string, typ TaskType) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, exists := m.tasks[filename]; exists {
-		return false
-	}
-	m.tasks[filename] = &Task{
-		Filename:  filename,
-		Username:  username,
-		Type:      typ,
-		TotalSize: -1,
-	}
-	return true
-}
-
-// SetCancel 绑定 context cancel 函数，worker 启动后调用。
-func (m *TaskManager) SetCancel(filename string, cancel context.CancelFunc) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if t, ok := m.tasks[filename]; ok {
-		t.cancel = cancel
-	}
-}
-
-// UpdateProgress 更新下载进度。
-func (m *TaskManager) UpdateProgress(filename string, downloaded, total int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if t, ok := m.tasks[filename]; ok {
-		t.Downloaded = downloaded
-		t.TotalSize = total
-	}
-}
-
-// Remove 任务完成或失败后清除记录。
-func (m *TaskManager) Remove(filename string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.tasks, filename)
-}
-
-// Cancel 取消任务并从 map 中删除，返回 false 表示任务不存在。
-func (m *TaskManager) Cancel(filename string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	t, ok := m.tasks[filename]
-	if !ok {
-		return false
-	}
-	if t.cancel != nil {
-		t.cancel()
-	}
-	delete(m.tasks, filename)
-	return true
-}
-
-// ListDownloads 返回所有下载任务的快照，供 /progress 接口使用。
-func (m *TaskManager) ListDownloads() []TaskSnapshot {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	result := make([]TaskSnapshot, 0, len(m.tasks))
-	for _, t := range m.tasks {
-		if t.Type == TaskDownload {
-			result = append(result, TaskSnapshot{
-				Filename:   t.Filename,
-				Username:   t.Username,
-				Downloaded: t.Downloaded,
-				TotalSize:  t.TotalSize,
-			})
-		}
-	}
-	return result
-}
-
-// TaskSnapshot 是对外暴露的只读任务状态，不含 cancel 函数。
-type TaskSnapshot struct {
-	Filename   string
-	Username   string
-	Downloaded int64
-	TotalSize  int64
+func (p *DownloadProgress) Snapshot() (downloaded, total int64) {
+	return p.downloaded.Load(), p.totalSize.Load()
 }
 
 // ── DownloadTask ────────────────────────────────────────────
 
-// DownloadTask 是 FileHandler 校验完毕后交给 Downloader 的任务描述。
-// 路径校验、文件存在检查由 FileHandler 负责，Downloader 只管 I/O。
 type DownloadTask struct {
 	URL        string
-	TargetPath string // 完整绝对路径，由 FileHandler 计算好
-	TempDir    string // 临时目录
-	Filename   string // 用于进度追踪的 key（相对路径）
+	TargetPath string
+	TempDir    string
+	Filename   string
 	Username   string
 }
 
 // ── Downloader ──────────────────────────────────────────────
 
-// Downloader 持有任务队列，管理固定数量的 worker goroutine。
-// worker 数量在 Start() 时确定，运行期间不变。
 type Downloader struct {
-	tasks   *TaskManager
 	queue   chan DownloadTask
 	workers int
 	logger  *slog.Logger
+
+	// filename -> *DownloadProgress，零锁读进度
+	progress sync.Map
+	// filename -> context.CancelFunc，用于取消
+	cancels sync.Map
 }
 
-// NewDownloader 创建 Downloader，workers 从 config.DownloadWorkers 传入。
-// queueSize 建议设为 workers 的 2-4 倍，防止 handler 被阻塞。
-func NewDownloader(tasks *TaskManager, workers int, logger *slog.Logger) *Downloader {
+func NewDownloader(workers int, logger *slog.Logger) *Downloader {
 	if workers <= 0 {
 		workers = 1
 	}
 	return &Downloader{
-		tasks:   tasks,
 		queue:   make(chan DownloadTask, workers*4),
 		workers: workers,
 		logger:  logger,
 	}
 }
 
-// Start 启动 worker goroutine，应在 main 里调用一次。
 func (d *Downloader) Start() {
 	for i := 0; i < d.workers; i++ {
 		go d.worker()
@@ -175,28 +73,85 @@ func (d *Downloader) Start() {
 	d.logger.Info("下载 worker 已启动", "workers", d.workers)
 }
 
-// Enqueue 将任务投入队列，队列满时非阻塞返回错误。
-// FileHandler 在调用 Enqueue 之前已通过 TaskManager.TryAdd 登记任务。
+// IsRunning 检查某文件是否有下载任务正在进行。
+func (d *Downloader) IsRunning(filename string) bool {
+	_, ok := d.cancels.Load(filename)
+	return ok
+}
+
+// Enqueue 登记进度、注册占位 cancel，再投入队列。
+// 调用方已确认目标文件不存在。
 func (d *Downloader) Enqueue(task DownloadTask) error {
+	prog := &DownloadProgress{Username: task.Username}
+	// 用 LoadOrStore 保证幂等：若已存在则拒绝
+	if _, loaded := d.progress.LoadOrStore(task.Filename, prog); loaded {
+		return errors.New("下载任务已存在")
+	}
+	// 存一个 nil cancel 占位，worker 启动后替换
+	d.cancels.Store(task.Filename, context.CancelFunc(nil))
+
 	select {
 	case d.queue <- task:
 		return nil
 	default:
+		d.progress.Delete(task.Filename)
+		d.cancels.Delete(task.Filename)
 		return errors.New("下载队列已满")
 	}
 }
 
+// Cancel 取消下载，返回 false 表示任务不存在。
+func (d *Downloader) Cancel(filename string) bool {
+	val, ok := d.cancels.Load(filename)
+	if !ok {
+		return false
+	}
+	if cancel, _ := val.(context.CancelFunc); cancel != nil {
+		cancel()
+	}
+	return true
+}
+
+// ListProgress 返回所有进行中下载的快照，供 /progress 使用。
+func (d *Downloader) ListProgress() map[string]ProgressSnapshot {
+	result := make(map[string]ProgressSnapshot)
+	d.progress.Range(func(key, val any) bool {
+		filename := key.(string)
+		prog := val.(*DownloadProgress)
+		downloaded, total := prog.Snapshot()
+		result[filename] = ProgressSnapshot{
+			Username:   prog.Username,
+			Downloaded: downloaded,
+			TotalSize:  total,
+		}
+		return true
+	})
+	return result
+}
+
+type ProgressSnapshot struct {
+	Username   string
+	Downloaded int64
+	TotalSize  int64
+}
+
+// ── worker & execute ────────────────────────────────────────
+
 func (d *Downloader) worker() {
 	for task := range d.queue {
 		ctx, cancel := context.WithCancel(context.Background())
-		d.tasks.SetCancel(task.Filename, cancel)
+		// 替换占位 cancel
+		d.cancels.Store(task.Filename, cancel)
 		d.execute(ctx, task)
+		cancel() // 确保 context 资源释放
 	}
 }
 
-// execute 执行单次下载，所有路径已由 FileHandler 校验，此处只做 I/O。
 func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
-	defer d.tasks.Remove(task.Filename)
+	defer func() {
+		d.progress.Delete(task.Filename)
+		d.cancels.Delete(task.Filename)
+	}()
 
 	d.logger.Info("开始远程下载", "url", task.URL, "file", task.Filename)
 
@@ -227,7 +182,9 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		d.logger.Warn("远程下载: 文件超过 100GB 限制", "size", totalSize)
 		return
 	}
-	d.tasks.UpdateProgress(task.Filename, 0, totalSize)
+
+	prog, _ := d.progress.Load(task.Filename)
+	prog.(*DownloadProgress).Update(0, totalSize)
 
 	tempPath := filepath.Join(
 		task.TempDir,
@@ -241,9 +198,8 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 	defer os.Remove(tempPath)
 
 	pw := &progressWriter{
-		filename: task.Filename,
-		total:    totalSize,
-		tasks:    d.tasks,
+		prog:  prog.(*DownloadProgress),
+		total: totalSize,
 	}
 	_, err = io.Copy(io.MultiWriter(tmpFile, pw), resp.Body)
 	tmpFile.Close()
@@ -254,6 +210,12 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		} else {
 			d.logger.Error("远程下载失败: 传输错误", "error", err)
 		}
+		return
+	}
+
+	// rename 前再次检查目标文件，防止下载期间已有同名文件落地
+	if _, err := os.Stat(task.TargetPath); err == nil {
+		d.logger.Warn("远程下载: 目标文件已存在，丢弃", "file", task.Filename)
 		return
 	}
 
@@ -268,15 +230,14 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 // ── progressWriter ──────────────────────────────────────────
 
 type progressWriter struct {
-	filename string
-	total    int64
-	written  int64
-	tasks    *TaskManager
+	prog    *DownloadProgress
+	total   int64
+	written int64
 }
 
 func (pw *progressWriter) Write(p []byte) (int, error) {
 	n := len(p)
 	pw.written += int64(n)
-	pw.tasks.UpdateProgress(pw.filename, pw.written, pw.total)
+	pw.prog.Update(pw.written, pw.total)
 	return n, nil
 }

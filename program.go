@@ -3,6 +3,7 @@ package main
 import (
 	"bakaWFS/internal/auth"
 	"bakaWFS/internal/config"
+	"bakaWFS/internal/fileutil"
 	"bakaWFS/internal/handler"
 	"bakaWFS/internal/task"
 	"crypto/tls"
@@ -15,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/lmittmann/tint"
 )
@@ -104,12 +106,11 @@ func main() {
 	}
 
 	authSvc := auth.NewAuth(cfg, usersCfg)
-	tasks := task.NewTaskManager()
-	downloader := task.NewDownloader(tasks, cfg.DownloadWorkers, logger)
+	downloader := task.NewDownloader(cfg.DownloadWorkers, logger)
 	downloader.Start()
 
 	ah := handler.NewAuthHandler(authSvc, logger)
-	fh := handler.NewFileHandler(cfg, logger, tasks, downloader)
+	fh := handler.NewFileHandler(cfg, logger, downloader)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
 
@@ -122,6 +123,8 @@ func main() {
 	mux.HandleFunc("/remote-upload", authMW(fh.HandleRemoteUpload))
 	mux.HandleFunc("/progress", authMW(fh.HandleProgress))
 	mux.HandleFunc("/cancel", authMW(fh.HandleCancel))
+	mux.HandleFunc("/upload/chunk", authMW(fh.HandleChunkUpload))
+	mux.HandleFunc("/upload/merge", authMW(fh.HandleChunkMerge))
 	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 
@@ -131,6 +134,15 @@ func main() {
 		//handler.CORSMiddleware,
 		handler.StatusOK,
 	)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := fileutil.CleanStaleChunks(cfg.TempDir, 24*time.Hour); err != nil {
+				logger.Warn("清理过期 chunk 失败", "error", err)
+			}
+		}
+	}()
 	printLogo(output)
 	logger.Info("baka文件服务器已启动")
 
