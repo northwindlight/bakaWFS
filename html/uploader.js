@@ -14,7 +14,7 @@ export function doDirectUpload({ file, fullPath, taskId, token, API_BASE, progre
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         uploadTasks.value[taskId] = xhr;
-        xhr.open('POST', `${API_BASE}/update`, true);
+        xhr.open('POST', `${API_BASE}/upload`, true);
         xhr.setRequestHeader('Authorization', `Bearer ${token}`);
         xhr.setRequestHeader('X-Upload-Filename', encodeURIComponent(fullPath));
 

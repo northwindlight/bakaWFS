@@ -111,7 +111,7 @@ createApp({
                     const tokenValid = await verifyToken();
                     if (!tokenValid) { loading.value = false; return; }
                 }
-                const res = await fetchWithRetry(`${API_BASE}/node`, {}, 3, 500);
+                const res = await fetchWithRetry(`${API_BASE}/list`, {}, 3, 500);
                 const data = await res.json();
                 rootData.value = data;
                 currentDir.value = data;

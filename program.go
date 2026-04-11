@@ -115,10 +115,10 @@ func main() {
 	authMW := handler.AuthMiddleware(authSvc, logger)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/node", fh.HandleNode)
+	mux.HandleFunc("/list", fh.HandleNode)
 	mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
 	mux.HandleFunc("/login", ah.HandleLogin)
-	mux.HandleFunc("/update", authMW(fh.HandleUpload))
+	mux.HandleFunc("/upload", authMW(fh.HandleUpload))
 	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
 	mux.HandleFunc("/remote-upload", authMW(fh.HandleRemoteUpload))
 	mux.HandleFunc("/progress", authMW(fh.HandleProgress))

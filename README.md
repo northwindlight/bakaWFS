@@ -4,7 +4,7 @@
 
 这是类似filebrowser的go程序，可以追溯到很久以前我的一个goapi项目，目前尚在重构，正在持续更新。
 
-前端使用了大量ai生成代码，大概40%左右，后端由我独立完成。
+前端使用了大量ai生成代码，大概40%左右，后端主要由我完成。
 
 服务端配置了CORS中间件（需要取消program.go中间件链的注释），允许自行编写前端或者cli工具。
 
@@ -78,16 +78,19 @@ users:
 |------|------|------|------|
 | POST | `/login` | 登录，返回 JWT | 否 |
 | POST | `/verify` | 验证并续签 token | 是 |
-| GET  | `/node` | 获取文件目录树 | 否 |
-| GET  | `/files/*` | 下载文件 | 否 |
-| POST | `/update` | 上传文件 | 是 |
-| POST | `/remote-upload` | 从 URL 下载到服务器 | 是 |
-| GET  | `/progress` | 查看远程下载进度 | 是 |
-| POST | `/cancel?filename=` | 取消下载任务 | 是 |
+| GET | `/list` | 获取文件目录树 | 否 |
+| GET | `/files/*` | 下载文件 | 否 |
+| POST | `/upload` | 上传文件（整体） | 是 |
+| POST | `/upload/chunk` | 上传单个分片 | 是 |
+| POST | `/upload/merge` | 合并分片 | 是 |
+| POST | `/remote-upload` | 从 URL 下载文件到服务器 | 是 |
+| GET | `/progress` | 查看远程下载进度 | 是 |
+| POST | `/cancel` | 取消远程下载任务 | 是 |
+
 
 鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
 
-所有api格式均在dto/json中，目前api风格不一致，且缺乏文档，会持续改进。
+api详情请见[bakaWFS API](bakaWFS_API)
 
 ## 项目结构
 
