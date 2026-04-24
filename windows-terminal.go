@@ -80,35 +80,40 @@ func setupOutput() io.Writer {
 	return colorable.NewColorableStdout()
 }
 
+// DisableQuickEdit 检查并关闭传统 conhost 的快速编辑模式。
+//
+// 快速编辑模式允许用户在控制台中用鼠标选取文字，但 conhost 下选文字会
+// 阻塞程序的控制台 I/O（程序完全卡住），因此理想情况是检测到 conhost
+// 时自动关闭此模式。
+//
+// 问题在于：Windows Terminal 也可能复用 conhost 作为后端，此时 console
+// mode 同样标记了快速编辑开启，但 WT 的选取由自己处理，不会阻塞程序。
+// 如果一并关掉，反而导致 WT 无法用鼠标选文字。
+//
+// 理想方案是向上遍历父进程链找到最顶层宿主来判断终端类型，但实现复杂，
+// 边界情况多（服务宿主、不同启动方式等），暂时搁置。
+// 当前做法：无论哪种终端都不动快速编辑，优先保证 WT 用户的选取功能。
+// ── 待改进：用 NtQueryInformationProcess / CreateToolhelp32Snapshot
+//    遍历父进程树，识别终端类型后做不同处理。
 func DisableQuickEdit() {
 	h, err := windows.GetStdHandle(windows.STD_INPUT_HANDLE)
 	if err != nil {
 		return
 	}
-	// 2. 判断是否为控制台
+
 	var mode uint32
 	if err := windows.GetConsoleMode(h, &mode); err != nil {
-		// 不是控制台（重定向/管道）
 		return
 	}
 
-	const (
-		ENABLE_QUICK_EDIT_MODE = 0x0040
-		ENABLE_EXTENDED_FLAGS  = 0x0080
-	)
+	const ENABLE_QUICK_EDIT_MODE = 0x0040
 
-	// 3. 判断是否是传统控制台（是否开启了快速编辑）
-	isLegacyConsole := (mode & ENABLE_QUICK_EDIT_MODE) != 0
-
-	if !isLegacyConsole {
-		// 现代终端，不提示，不处理
+	// 快速编辑未开启，无需处理
+	if (mode & ENABLE_QUICK_EDIT_MODE) == 0 {
 		return
 	}
-	return
-	// 4. 关闭快速编辑（必须先加 EXTENDED_FLAGS）
-	newMode := mode | ENABLE_EXTENDED_FLAGS
-	newMode &^= ENABLE_QUICK_EDIT_MODE
 
-	_ = windows.SetConsoleMode(h, newMode)
-	fmt.Println("检测到cmd或powershell，已经关闭快速编辑模式")
+	// 目前暂时搁置区分逻辑，不影响程序正常运行。
+	_ = h
+	_ = mode
 }

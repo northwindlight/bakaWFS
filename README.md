@@ -96,28 +96,30 @@ api详情请见[bakaWFS API](bakaWFS_API)
 
 ```
 .
-├── program.go
-├── windows-terminal.go
+├── program.go           # 主入口
+├── embed.go             # 嵌入前端静态文件
+├── windows-terminal.go  # Windows 终端色彩适配
+├── linux-terminal.go    # Linux/macOS 终端输出
 ├── config.yaml
 ├── users.yaml
 ├── internal/
-│   ├── auth/        # JWT 逻辑
-│   ├── config/      # 配置加载与校验
-│   ├── dto/         # 数据结构
-│   ├── fileutil/    # 文件工具函数
-│   ├── handler/     # HTTP handler 与中间件
-│   └── task/        # 任务管理与下载 worker
-├── files/           # 文件存储目录
-├── html/            # 前端静态文件
-└── .uploads/        # 临时目录，启动时自动清理
+│   ├── auth/            # JWT 逻辑
+│   ├── config/          # 配置加载与校验
+│   ├── dto/             # 数据结构
+│   ├── fileutil/        # 文件工具函数（含 xxhash 校验）
+│   ├── handler/         # HTTP handler 与中间件
+│   └── task/            # 远程下载任务管理
+├── files/               # 文件存储目录
+├── html/                # 前端静态文件（编译时嵌入二进制）
+└── .uploads/            # 临时目录，启动时自动清理
 ```
 ## 依赖
 
 | 依赖 | 说明 |
 |---|---|
 | [golang-jwt](https://github.com/golang-jwt/jwt) | 提供jwt认证 |
-| [xxhash](https://github.com/cespare/xxhash) | 未实装，用来提供切片上传的文件校验，目前还在开发中 |
-| [go-colorable](https://github.com/mattn/go-colorable) | Windowscli颜色问题正在解决中 |
+| [xxhash](https://github.com/cespare/xxhash) | 用于切片上传的客户端（Wasm）+ 服务端双重文件完整性校验 |
+| [go-colorable](https://github.com/mattn/go-colorable) | 旧版 Windows CMD 终端色彩回退适配 |
 
 ---
 
