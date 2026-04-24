@@ -1,67 +1,67 @@
 # baka-web-file-server
 
-一个简单的无状态自托管文件服务器，HTTPS + JWT 鉴权，提供RPC风格的api，支持上传、远程下载和进度追踪。提供一个web界面，简单且易于部署。
+一个轻量、无状态的自托管文件服务器。基于 HTTPS + JWT 鉴权，提供 RPC 风格的 API，支持文件上传、远程 URL 下载和进度追踪。附带开箱即用的 Web 界面，部署简单。
 
-这是类似filebrowser的go程序，可以追溯到很久以前我的一个goapi项目，目前尚在重构，正在持续更新。
+类似 filebrowser，但完全独立实现。后端由我完成，前端约 40% 由 AI 生成。
 
-前端使用了大量ai生成代码，大概40%左右，后端主要由我完成。
-
-服务端配置了CORS中间件（需要取消program.go中间件链的注释），允许自行编写前端或者cli工具。
+服务端内置 CORS 中间件（如需启用，取消 `program.go` 中间件链的注释），方便自行编写前端或 CLI 工具。
 
 ## 功能
 
 - 文件浏览、上传、下载
 - 远程 URL 下载到服务器
-- JWT 登录鉴权 + token 续签
+- 分片上传 + xxhash 完整性校验
+- JWT 登录鉴权 + Token 自动续签
+- 并发远程下载任务管理（支持取消和进度追踪）
+- 内置 Web UI（编译时嵌入二进制，也支持外部目录）
 
 ## 预览
 
 ![主页](assets/index.jpeg)
-
 ![文件浏览](assets/browser.jpeg)
-
 ![下载任务](assets/download.jpeg)
 
-
 ## 快速开始
-
-直接运行：
 
 ```bash
 ./bakaWFS
 ```
 
-首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`，编辑后重新启动。
+首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`，编辑后重新启动即可。
 
-启用TLS需要自己准备证书。没有启用TLS的情况下，不要在公网环境测试，极其不安全。
-
-```yaml
-cert_path: "certificate.crt" #证书
-key_path:  "private.key"     #私钥
-```
+### 首次配置
 
 **必须修改的字段：**
 
 ```yaml
-secret: "替换为随机字符串"   # 作为jwt的密钥
+secret: "替换为随机字符串"   # JWT 签名密钥
 ```
+
+**TLS 证书（可选）：**
+
+```yaml
+cert_path: "certificate.crt"
+key_path:  "private.key"
+```
+
+启用 TLS 前请准备好证书。未启用 TLS 时，**不要将服务暴露在公网**。
 
 ## 配置说明
 
 `config.yaml`：
 
 ```yaml
-address: "0.0.0.0" 
-https_port: 443 # 端口设为 -1 表示关闭该协议。两者同时开启时，HTTP 会重定向到 HTTPS。
+address: "0.0.0.0"
+https_port: 443          # 设为 -1 关闭该协议。两者同时开启时 HTTP 自动重定向到 HTTPS
 http_port:  80
 secret: ""
 cert_path: "certificate.crt"
 key_path:  "private.key"
-file_dir:   "files"
-html_dir:   "built-in"       #你也可以自己写一个漂亮的前端，换成你的html文件夹路径即可（默认加载文件夹中的index.html）
-temp_dir:   ".uploads"
+file_dir:   "files"      # 文件存储根目录
+html_dir:   "built-in"   # 设为 "built-in" 使用内置前端；也可指定外部目录（加载其中的 index.html）
+temp_dir:   ".uploads"   # 临时目录（分片上传、远程下载暂存）
 users_file: "users.yaml"
-download_workers: 2          # 并发远程下载 worker 数
+download_workers: 2       # 并发远程下载 worker 数
 ```
 
 `users.yaml`：
@@ -77,20 +77,19 @@ users:
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
 | POST | `/login` | 登录，返回 JWT | 否 |
-| POST | `/verify` | 验证并续签 token | 是 |
-| GET | `/list` | 获取文件目录树 | 否 |
-| GET | `/files/*` | 下载文件 | 否 |
-| POST | `/upload` | 上传文件（整体） | 是 |
+| POST | `/verify` | 验证并续签 Token | 是 |
+| GET  | `/list` | 获取文件目录树 | 否 |
+| GET  | `/files/*` | 下载文件（支持 Range / 断点续传） | 否 |
+| POST | `/upload` | 上传文件（整体上传） | 是 |
 | POST | `/upload/chunk` | 上传单个分片 | 是 |
 | POST | `/upload/merge` | 合并分片 | 是 |
 | POST | `/remote-upload` | 从 URL 下载文件到服务器 | 是 |
-| GET | `/progress` | 查看远程下载进度 | 是 |
+| GET  | `/progress` | 查看远程下载进度 | 是 |
 | POST | `/cancel` | 取消远程下载任务 | 是 |
-
 
 鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
 
-api详情请见[bakaWFS API](bakaWFS_API)
+详细 API 文档见 [bakaWFS API](bakaWFS_API.md)。
 
 ## 项目结构
 
@@ -113,15 +112,14 @@ api详情请见[bakaWFS API](bakaWFS_API)
 ├── html/                # 前端静态文件（编译时嵌入二进制）
 └── .uploads/            # 临时目录，启动时自动清理
 ```
+
 ## 依赖
 
 | 依赖 | 说明 |
-|---|---|
-| [golang-jwt](https://github.com/golang-jwt/jwt) | 提供jwt认证 |
-| [xxhash](https://github.com/cespare/xxhash) | 用于切片上传的客户端（Wasm）+ 服务端双重文件完整性校验 |
+|------|------|
+| [golang-jwt](https://github.com/golang-jwt/jwt) | JWT 认证 |
+| [xxhash](https://github.com/cespare/xxhash) | 分片上传的客户端（Wasm）+ 服务端双重文件完整性校验 |
 | [go-colorable](https://github.com/mattn/go-colorable) | 旧版 Windows CMD 终端色彩回退适配 |
-
----
 
 ## License
 
