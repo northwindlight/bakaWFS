@@ -1,7 +1,7 @@
 package task
 
 import (
-	"bakaWFS/internal/fileutil"
+	"bakaWFS/internal/fileops"
 	"context"
 	"errors"
 	"fmt"
@@ -45,9 +45,10 @@ type DownloadTask struct {
 // ── Downloader ──────────────────────────────────────────────
 
 type Downloader struct {
-	queue   chan DownloadTask
-	workers int
-	logger  *slog.Logger
+	queue     chan DownloadTask
+	workers   int
+	logger    *slog.Logger
+	fileQueue *fileops.Queue
 
 	// filename -> *DownloadProgress，零锁读进度
 	progress sync.Map
@@ -55,14 +56,15 @@ type Downloader struct {
 	cancels sync.Map
 }
 
-func NewDownloader(workers int, logger *slog.Logger) *Downloader {
+func NewDownloader(workers int, logger *slog.Logger, fileQueue *fileops.Queue) *Downloader {
 	if workers <= 0 {
 		workers = 1
 	}
 	return &Downloader{
-		queue:   make(chan DownloadTask, workers*4),
-		workers: workers,
-		logger:  logger,
+		queue:     make(chan DownloadTask, workers*4),
+		workers:   workers,
+		logger:    logger,
+		fileQueue: fileQueue,
 	}
 }
 
@@ -213,18 +215,18 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		return
 	}
 
-	// rename 前再次检查目标文件，防止下载期间已有同名文件落地
-	if _, err := os.Stat(task.TargetPath); err == nil {
-		d.logger.Warn("远程下载: 目标文件已存在，丢弃", "file", task.Filename)
+	result := d.fileQueue.Enqueue(fileops.Op{
+		Type:     fileops.OpRename,
+		Src:      tempPath,
+		Dst:      task.TargetPath,
+		Username: task.Username,
+	})
+	if result.Err != nil {
+		d.logger.Error("远程下载失败: 移动文件失败", "error", result.Err)
 		return
 	}
 
-	if err := fileutil.MoveFile(tempPath, task.TargetPath); err != nil {
-		d.logger.Error("远程下载失败: 移动文件失败", "error", err)
-		return
-	}
-
-	d.logger.Info("远程下载完成", "file", task.Filename, "size", totalSize)
+	d.logger.Info("远程下载完成", "file", result.Path, "size", totalSize)
 }
 
 // ── progressWriter ──────────────────────────────────────────

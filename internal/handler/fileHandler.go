@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bakaWFS/internal/config"
+	"bakaWFS/internal/fileops"
 	"bakaWFS/internal/fileutil"
 	"bakaWFS/internal/task"
 	"encoding/json"
@@ -20,13 +21,15 @@ type FileHandler struct {
 	cfg        config.Config
 	logger     *slog.Logger
 	downloader *task.Downloader
+	queue      *fileops.Queue
 }
 
-func NewFileHandler(cfg config.Config, logger *slog.Logger, downloader *task.Downloader) *FileHandler {
+func NewFileHandler(cfg config.Config, logger *slog.Logger, downloader *task.Downloader, queue *fileops.Queue) *FileHandler {
 	return &FileHandler{
 		cfg:        cfg,
 		logger:     logger,
 		downloader: downloader,
+		queue:      queue,
 	}
 }
 
@@ -87,13 +90,7 @@ func (h *FileHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targetPath := filepath.Join(h.cfg.DirPath, filename)
-	if _, err := os.Stat(targetPath); err == nil {
-		http.Error(w, "Conflict: File already exists", http.StatusConflict)
-		h.logger.Warn("上传拦截: 文件已存在", "path", filename)
-		return
-	}
 
-	// 临时文件名带时间戳+用户名，并发上传不冲突
 	tempPath := filepath.Join(h.cfg.TempDir, fmt.Sprintf("%d-%s.tmp", time.Now().UnixNano(), username))
 	tempFile, err := os.Create(tempPath)
 	if err != nil {
@@ -123,21 +120,20 @@ func (h *FileHandler) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// rename 前再次检查，防止并发上传同名文件都写完临时文件后竞争
-	if _, err := os.Stat(targetPath); err == nil {
-		http.Error(w, "Conflict: File already exists", http.StatusConflict)
-		h.logger.Warn("上传拦截: 并发写入冲突，目标文件已存在", "path", filename)
-		return
-	}
-
-	if err := fileutil.MoveFile(tempPath, targetPath); err != nil {
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpRename,
+		Src:      tempPath,
+		Dst:      targetPath,
+		Username: username,
+	})
+	if result.Err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		h.logger.Error("上传失败: 持久化移动失败", "error", err)
+		h.logger.Error("上传失败: 持久化移动失败", "error", result.Err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-	h.logger.Info("文件上传成功", "file", filename, "user", username)
+	h.logger.Info("文件上传成功", "file", result.Path, "user", username)
 }
 
 func (h *FileHandler) HandleRemoteUpload(w http.ResponseWriter, r *http.Request) {
@@ -167,11 +163,6 @@ func (h *FileHandler) HandleRemoteUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	targetPath := filepath.Join(h.cfg.DirPath, req.Filename)
-	if _, err := os.Stat(targetPath); err == nil {
-		http.Error(w, "Conflict: File already exists", http.StatusConflict)
-		h.logger.Warn("远程下载: 文件已存在", "path", req.Filename)
-		return
-	}
 
 	dt := task.DownloadTask{
 		URL:        req.URL,
@@ -391,16 +382,192 @@ func (h *FileHandler) HandleChunkMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// hash 一致，移动到目标路径
-	if err := fileutil.MoveFile(mergePath, targetPath); err != nil {
+	// hash 一致，入队原子落盘
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpRename,
+		Src:      mergePath,
+		Dst:      targetPath,
+		Username: username,
+	})
+	if result.Err != nil {
 		os.Remove(mergePath)
+		fileutil.DeleteChunks(h.cfg.TempDir, req.Filename, req.Total)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		h.logger.Error("分片合并: 移动文件失败", "file", req.Filename, "error", err)
+		h.logger.Error("分片合并: 移动文件失败", "file", req.Filename, "error", result.Err)
 		return
 	}
 
 	// 清理 chunk
 	fileutil.DeleteChunks(h.cfg.TempDir, req.Filename, req.Total)
 	w.WriteHeader(http.StatusNoContent)
-	h.logger.Info("分片合并成功", "file", req.Filename, "user", username)
+	h.logger.Info("分片合并成功", "file", result.Path, "user", username)
+}
+
+func (h *FileHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Path); err != nil {
+		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	targetPath := filepath.Join(h.cfg.DirPath, req.Path)
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpDelete,
+		Dst:      targetPath,
+		Username: username,
+	})
+	if result.Err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("删除失败", "path", req.Path, "error", result.Err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+	h.logger.Info("文件已删除", "path", req.Path, "user", username)
+}
+
+func (h *FileHandler) HandleRename(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	var req struct {
+		Path string `json:"path"`
+		Dst  string `json:"dst"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" || req.Dst == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Path); err != nil {
+		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Dst); err != nil {
+		http.Error(w, "Bad Request: Forbidden destination path", http.StatusBadRequest)
+		return
+	}
+	srcPath := filepath.Join(h.cfg.DirPath, req.Path)
+	dstPath := filepath.Join(h.cfg.DirPath, req.Dst)
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpRename,
+		Src:      srcPath,
+		Dst:      dstPath,
+		Username: username,
+	})
+	if result.Err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("重命名失败", "src", req.Path, "dst", req.Dst, "error", result.Err)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"path": result.Path})
+	h.logger.Info("文件已重命名", "src", req.Path, "final", result.Path, "user", username)
+}
+
+func (h *FileHandler) HandleCopy(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	var req struct {
+		Path string `json:"path"`
+		Dst  string `json:"dst"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" || req.Dst == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Path); err != nil {
+		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Dst); err != nil {
+		http.Error(w, "Bad Request: Forbidden destination path", http.StatusBadRequest)
+		return
+	}
+	srcPath := filepath.Join(h.cfg.DirPath, req.Path)
+	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+
+	// 复制到临时目录，不入队，不阻塞
+	tempPath := filepath.Join(h.cfg.TempDir, fmt.Sprintf("%d-copy-%s.tmp", time.Now().UnixNano(), filepath.Base(req.Path)))
+	if err := fileutil.CopyFile(srcPath, tempPath); err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("复制失败", "src", req.Path, "error", err)
+		return
+	}
+
+	// 入队原子落盘
+	dstPath := filepath.Join(h.cfg.DirPath, req.Dst)
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpRename,
+		Src:      tempPath,
+		Dst:      dstPath,
+		Username: username,
+	})
+	if result.Err != nil {
+		os.Remove(tempPath)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("复制落盘失败", "dst", req.Dst, "error", result.Err)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"path": result.Path})
+	h.logger.Info("文件已复制", "src", req.Path, "final", result.Path, "user", username)
+}
+
+func (h *FileHandler) HandleMkdir(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(req.Path); err != nil {
+		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	targetPath := filepath.Join(h.cfg.DirPath, req.Path)
+	result := h.queue.Enqueue(fileops.Op{
+		Type:     fileops.OpMkdir,
+		Dst:      targetPath,
+		Username: username,
+	})
+	if result.Err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("创建目录失败", "path", req.Path, "error", result.Err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+	h.logger.Info("目录已创建", "path", req.Path, "user", username)
 }

@@ -25,6 +25,7 @@ type Config struct {
 	HtmlDir         string `yaml:"html_dir"`
 	TempDir         string `yaml:"temp_dir"`
 	DownloadWorkers int    `yaml:"download_workers"`
+	AuditLogPath    string `yaml:"audit_log"`
 }
 
 func (c *Config) HttpsEnabled() bool { return c.HttpsPort != PortDisabled }
@@ -64,6 +65,9 @@ users_file: "users.yaml"
 
 # 并发远程下载 worker 数量
 download_workers: 2
+
+# 审计日志路径，留空则关闭
+audit_log: ""
 `
 
 var defaultUsersConfig = `

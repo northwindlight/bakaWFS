@@ -3,6 +3,7 @@ package main
 import (
 	"bakaWFS/internal/auth"
 	"bakaWFS/internal/config"
+	"bakaWFS/internal/fileops"
 	"bakaWFS/internal/fileutil"
 	"bakaWFS/internal/handler"
 	"bakaWFS/internal/task"
@@ -105,12 +106,18 @@ func main() {
 		waitAndExit()
 	}
 
+	queue, err := fileops.New(logger, cfg.AuditLogPath)
+	if err != nil {
+		logger.Error("初始化审计日志失败", "error", err)
+		waitAndExit()
+	}
+
 	authSvc := auth.NewAuth(cfg, usersCfg)
-	downloader := task.NewDownloader(cfg.DownloadWorkers, logger)
+	downloader := task.NewDownloader(cfg.DownloadWorkers, logger, queue)
 	downloader.Start()
 
 	ah := handler.NewAuthHandler(authSvc, logger)
-	fh := handler.NewFileHandler(cfg, logger, downloader)
+	fh := handler.NewFileHandler(cfg, logger, downloader, queue)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
 
@@ -125,6 +132,10 @@ func main() {
 	mux.HandleFunc("/cancel", authMW(fh.HandleCancel))
 	mux.HandleFunc("/upload/chunk", authMW(fh.HandleChunkUpload))
 	mux.HandleFunc("/upload/merge", authMW(fh.HandleChunkMerge))
+	mux.HandleFunc("/delete", authMW(fh.HandleDelete))
+	mux.HandleFunc("/rename", authMW(fh.HandleRename))
+	mux.HandleFunc("/copy", authMW(fh.HandleCopy))
+	mux.HandleFunc("/mkdir", authMW(fh.HandleMkdir))
 	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 
