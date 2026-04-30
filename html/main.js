@@ -1,4 +1,4 @@
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
 
 // 导入拆分的模块
 import { i18n } from './i18n.js';
@@ -516,13 +516,32 @@ createApp({
             pickerStack.value = [...pathStack.value];
         };
 
-        const toggleOpsPanel = (item, event) => {
+        const toggleOpsPanel = (item) => {
             if (opsPanelFor.value === item) {
                 opsPanelFor.value = null;
             } else {
                 opsPanelFor.value = item;
             }
         };
+
+        let outsideClickCleanup = null;
+        watch(opsPanelFor, (val) => {
+            if (outsideClickCleanup) {
+                outsideClickCleanup();
+                outsideClickCleanup = null;
+            }
+            if (val) {
+                const handler = (e) => {
+                    if (!e.target.closest('.js-ops-panel') && !e.target.closest('.js-ops-btn')) {
+                        opsPanelFor.value = null;
+                    }
+                };
+                setTimeout(() => {
+                    document.addEventListener('click', handler, true);
+                }, 0);
+                outsideClickCleanup = () => document.removeEventListener('click', handler, true);
+            }
+        });
 
         const startRename = (item) => {
             opsPanelFor.value = null;

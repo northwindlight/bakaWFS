@@ -18,9 +18,10 @@
 
 ## 预览
 
-![主页](assets/index.jpeg)
-![文件浏览](assets/browser.jpeg)
-![下载任务](assets/download.jpeg)
+![主目录](assets/main-dir.png)
+![文件操作面板](assets/file-ops.png)
+![图片预览](assets/image-preview.png)
+![上传管理](assets/upload-mgmt.png)
 
 ## 快速开始
 

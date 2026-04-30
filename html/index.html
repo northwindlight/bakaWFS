@@ -375,9 +375,10 @@
                     </div>
 
                     <div v-else>
-                        <div v-for="item in sortedFiles" :key="item.name" 
+                        <div v-for="item in sortedFiles" :key="item.name"
                             @click="handleItemClick(item)"
-                            class="file-card group flex items-center justify-between p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2 relative">
+                            class="file-card group flex items-center justify-between p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2 relative"
+                            :style="opsPanelFor === item ? { zIndex: 50 } : {}">
                             
                             <div class="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
                                 
@@ -399,13 +400,15 @@
                             <div class="flex gap-2 items-center shrink-0 ml-2">
                                 <!-- 操作按钮 -->
                                 <div class="relative">
-                                    <button @click.stop="toggleOpsPanel(item, $event)"
-                                            class="ops-btn px-3 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap">
+                                    <button @click.stop.prevent="toggleOpsPanel(item)"
+                                            @mousedown.stop.prevent
+                                            class="js-ops-btn ops-btn px-3 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap select-none">
                                         操作
                                     </button>
                                     <!-- 操作面板 -->
                                     <div v-if="opsPanelFor === item"
-                                         class="absolute right-0 top-full mt-1 w-36 glass shadow-xl z-30 overflow-hidden rounded-2xl border border-white/80"
+                                         @click.stop
+                                         class="js-ops-panel absolute right-0 top-full mt-1 w-36 glass shadow-xl z-50 overflow-hidden rounded-2xl border border-white/80"
                                          style="animation: dropDown 0.15s ease-out">
                                         <button @click.stop="startRename(item)"
                                                 class="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-sky-50 transition text-sky-700 font-bold text-sm border-b border-sky-50">
@@ -420,7 +423,6 @@
                                             <span>🗑️</span> {{ i18n.opsDelete }}
                                         </button>
                                     </div>
-                                    <div v-if="opsPanelFor === item" @click="opsPanelFor = null" class="fixed inset-0 z-20"></div>
                                 </div>
                                 <button v-if="item.type === 'file'"
                                         @click.stop="downloadFile(item.name)"
