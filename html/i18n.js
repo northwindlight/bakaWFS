@@ -25,6 +25,27 @@ export const i18n = {
     chunkUploadFailed:  '分片上传失败：',
     mergeFailed:        '合并失败，请重试',
 
+    // 文件管理操作
+    opsRename:          '重命名 / 移动',
+    opsCopy:            '复制',
+    opsDelete:          '删除',
+    renameTitle:        '重命名 / 移动',
+    copyTitle:          '复制到...',
+    deleteTitle:        '确认删除',
+    deleteConfirm:      '琪露诺会把这东西冻成冰块然后敲碎！',
+    deleteWarning:     '此操作不可撤销',
+    newName:            '新名称',
+    targetLocation:     '目标位置',
+    selectHere:         '✓ 选择此位置',
+    renameSuccess:      '重命名成功',
+    copySuccess:        '复制成功',
+    deleteSuccess:      '删除成功',
+    operationFailed:    '操作失败：',
+    mkdirTitle:         '新建文件夹',
+    mkdirLabel:         '文件夹名称',
+    mkdirSuccess:       '文件夹已创建',
+    mkdirFailed:        '创建文件夹失败：',
+
     // 杂项
     unknownError:       '发生了不知道是什么的错误',
     unknownFilePrefix:  'unknown_ice_',

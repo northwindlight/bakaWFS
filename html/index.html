@@ -64,6 +64,22 @@
             background: rgba(79, 195, 247, 0.1);
             transform: translateY(-1px);
         }
+        .ops-btn {
+            background: transparent;
+            border: 2px solid #4FC3F7;
+            color: #0288D1;
+            font-weight: bold;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+            letter-spacing: 1px;
+        }
+        .ops-btn:hover {
+            background: rgba(79, 195, 247, 0.1);
+            transform: translateY(-1px);
+        }
+        .picker-dir:hover {
+            background: rgba(3, 169, 244, 0.08);
+        }
         @keyframes dropDown {
             from { opacity: 0; transform: translateY(-6px) scale(0.97); }
             to   { opacity: 1; transform: translateY(0)    scale(1); }
@@ -134,6 +150,12 @@
                             <span class="opacity-60">/</span><span v-if="pathStack.length === 0" class="opacity-40">根目录</span><template v-for="(seg, i) in pathStack" :key="i"><span>{{ seg.name }}</span><span v-if="i < pathStack.length - 1" class="opacity-40">/</span></template>
                         </span>
                     </div>
+
+                    <!-- 新建文件夹 -->
+                    <button @click="openMkdirModal"
+                            class="shrink-0 flex items-center gap-1.5 bg-sky-100/50 text-sky-600 px-3 py-2 rounded-xl text-sm font-bold hover:bg-sky-200 active:scale-95 transition select-none border-2 border-sky-200">
+                        📁+
+                    </button>
 
                     <!-- 上传 下拉按钮 -->
                     <div class="relative shrink-0">
@@ -240,6 +262,110 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- 重命名 / 移动模态框 -->
+                    <div v-if="showRenameModal" class="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm" @click.self="showRenameModal = false">
+                        <div class="glass p-5 w-full max-w-sm shadow-2xl">
+                            <h3 class="text-lg mb-3 text-sky-800 font-bold">{{ i18n.renameTitle }}</h3>
+                            <div class="mb-3">
+                                <label class="text-xs text-sky-500 block mb-1">{{ i18n.newName }}</label>
+                                <input v-model="renameName" type="text"
+                                    class="w-full p-2 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-400 outline-none text-sm">
+                            </div>
+                            <div class="mb-3">
+                                <label class="text-xs text-sky-500 block mb-1">{{ i18n.targetLocation }}</label>
+                                <div class="border border-sky-100 rounded-xl overflow-hidden">
+                                    <div class="flex items-center gap-1 px-2 py-1.5 bg-sky-50/50 overflow-x-auto text-xs">
+                                        <button @click="pickerGoToLevel(-1)" class="shrink-0 text-sky-400 hover:text-sky-600">📁</button>
+                                        <template v-for="(seg, i) in pickerStack" :key="i">
+                                            <span class="text-sky-300">/</span>
+                                            <button @click="pickerGoToLevel(i)" class="shrink-0 text-sky-500 hover:text-sky-700 truncate max-w-[100px]">{{ seg.name }}</button>
+                                        </template>
+                                        <span class="text-sky-300">/</span>
+                                    </div>
+                                    <div class="max-h-32 overflow-y-auto p-1">
+                                        <div v-for="d in pickerDirs" :key="d.name"
+                                             @click="pickerEnter(d)"
+                                             class="picker-dir flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-sm text-sky-700">
+                                            <span>📁</span> {{ d.name }}
+                                        </div>
+                                        <div v-if="pickerDirs.length === 0" class="text-xs text-sky-300 text-center py-4">此目录下没有子目录</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex gap-3">
+                                <button @click="showRenameModal = false" class="flex-1 py-2 rounded-lg font-bold text-sky-400 hover:bg-sky-50 transition">取消</button>
+                                <button @click="confirmRename" class="flex-1 bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">确认</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 复制模态框 -->
+                    <div v-if="showCopyModal" class="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm" @click.self="showCopyModal = false">
+                        <div class="glass p-5 w-full max-w-sm shadow-2xl">
+                            <h3 class="text-lg mb-3 text-sky-800 font-bold">{{ i18n.copyTitle }}</h3>
+                            <div class="mb-3">
+                                <label class="text-xs text-sky-500 block mb-1">{{ i18n.newName }} <span class="text-sky-300">(可选)</span></label>
+                                <input v-model="copyName" type="text"
+                                    class="w-full p-2 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-400 outline-none text-sm">
+                            </div>
+                            <div class="mb-3">
+                                <label class="text-xs text-sky-500 block mb-1">{{ i18n.targetLocation }}</label>
+                                <div class="border border-sky-100 rounded-xl overflow-hidden">
+                                    <div class="flex items-center gap-1 px-2 py-1.5 bg-sky-50/50 overflow-x-auto text-xs">
+                                        <button @click="pickerGoToLevel(-1)" class="shrink-0 text-sky-400 hover:text-sky-600">📁</button>
+                                        <template v-for="(seg, i) in pickerStack" :key="i">
+                                            <span class="text-sky-300">/</span>
+                                            <button @click="pickerGoToLevel(i)" class="shrink-0 text-sky-500 hover:text-sky-700 truncate max-w-[100px]">{{ seg.name }}</button>
+                                        </template>
+                                        <span class="text-sky-300">/</span>
+                                    </div>
+                                    <div class="max-h-32 overflow-y-auto p-1">
+                                        <div v-for="d in pickerDirs" :key="d.name"
+                                             @click="pickerEnter(d)"
+                                             class="picker-dir flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer text-sm text-sky-700">
+                                            <span>📁</span> {{ d.name }}
+                                        </div>
+                                        <div v-if="pickerDirs.length === 0" class="text-xs text-sky-300 text-center py-4">此目录下没有子目录</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex gap-3">
+                                <button @click="showCopyModal = false" class="flex-1 py-2 rounded-lg font-bold text-sky-400 hover:bg-sky-50 transition">取消</button>
+                                <button @click="confirmCopy" class="flex-1 bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">确认</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 删除确认模态框 -->
+                    <div v-if="showDeleteConfirm" class="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm" @click.self="showDeleteConfirm = false">
+                        <div class="glass p-6 w-full max-w-xs shadow-2xl text-center">
+                            <div class="text-4xl mb-3">⚠️</div>
+                            <h3 class="text-lg mb-2 text-sky-800 font-bold">{{ i18n.deleteTitle }}</h3>
+                            <p class="text-sm text-sky-600 mb-1 font-bold truncate">{{ opsTarget?.name }}</p>
+                            <p class="text-xs text-sky-400 mb-1">{{ i18n.deleteConfirm }}</p>
+                            <p class="text-xs text-red-400 mb-4">{{ i18n.deleteWarning }}</p>
+                            <div class="flex gap-3">
+                                <button @click="showDeleteConfirm = false" class="flex-1 py-2 rounded-lg font-bold text-sky-400 hover:bg-sky-50 transition">取消</button>
+                                <button @click="confirmDelete" class="flex-1 bg-red-500 text-white py-2 rounded-lg font-bold hover:bg-red-600 transition">删除</button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 新建文件夹模态框 -->
+                    <div v-if="showMkdirModal" class="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm" @click.self="showMkdirModal = false">
+                        <div class="glass p-5 w-full max-w-xs shadow-2xl">
+                            <h3 class="text-lg mb-3 text-sky-800 font-bold">{{ i18n.mkdirTitle }}</h3>
+                            <div class="mb-4">
+                                <label class="text-xs text-sky-500 block mb-1">{{ i18n.mkdirLabel }}</label>
+                                <input v-model="mkdirName" type="text" @keyup.enter="confirmMkdir"
+                                    class="w-full p-2 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-400 outline-none text-sm">
+                            </div>
+                            <div class="flex gap-3">
+                                <button @click="showMkdirModal = false" class="flex-1 py-2 rounded-lg font-bold text-sky-400 hover:bg-sky-50 transition">取消</button>
+                                <button @click="confirmMkdir" class="flex-1 bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">创建</button>
+                            </div>
+                        </div>
+                    </div>
                 </teleport>
 
                 <div class="flex-1 p-2 overflow-y-auto">
@@ -251,7 +377,7 @@
                     <div v-else>
                         <div v-for="item in sortedFiles" :key="item.name" 
                             @click="handleItemClick(item)"
-                            class="file-card group flex items-center justify-between p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2 relative overflow-hidden">
+                            class="file-card group flex items-center justify-between p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2 relative">
                             
                             <div class="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
                                 
@@ -271,11 +397,36 @@
                             </div>
 
                             <div class="flex gap-2 items-center shrink-0 ml-2">
-                                <button v-if="item.type === 'file'" 
+                                <!-- 操作按钮 -->
+                                <div class="relative">
+                                    <button @click.stop="toggleOpsPanel(item, $event)"
+                                            class="ops-btn px-3 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap">
+                                        操作
+                                    </button>
+                                    <!-- 操作面板 -->
+                                    <div v-if="opsPanelFor === item"
+                                         class="absolute right-0 top-full mt-1 w-36 glass shadow-xl z-30 overflow-hidden rounded-2xl border border-white/80"
+                                         style="animation: dropDown 0.15s ease-out">
+                                        <button @click.stop="startRename(item)"
+                                                class="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-sky-50 transition text-sky-700 font-bold text-sm border-b border-sky-50">
+                                            <span>✏️</span> {{ i18n.opsRename }}
+                                        </button>
+                                        <button @click.stop="startCopy(item)"
+                                                class="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-sky-50 transition text-sky-700 font-bold text-sm border-b border-sky-50">
+                                            <span>📋</span> {{ i18n.opsCopy }}
+                                        </button>
+                                        <button @click.stop="startDelete(item)"
+                                                class="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-red-50 transition text-red-500 font-bold text-sm">
+                                            <span>🗑️</span> {{ i18n.opsDelete }}
+                                        </button>
+                                    </div>
+                                    <div v-if="opsPanelFor === item" @click="opsPanelFor = null" class="fixed inset-0 z-20"></div>
+                                </div>
+                                <button v-if="item.type === 'file'"
                                         @click.stop="downloadFile(item.name)"
                                         class="download-btn px-4 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap">
                                     下载
-                                </button> 
+                                </button>
                             </div>
                         </div>
 

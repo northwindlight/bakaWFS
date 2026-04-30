@@ -16,6 +16,10 @@
 | POST | `/remote-upload` | 从 URL 下载文件到服务器 | 是 |
 | GET | `/progress` | 查看远程下载进度 | 是 |
 | POST | `/cancel` | 取消远程下载任务 | 是 |
+| POST | `/delete` | 删除文件或目录 | 是 |
+| POST | `/rename` | 重命名/移动文件或目录 | 是 |
+| POST | `/copy` | 复制文件或目录 | 是 |
+| POST | `/mkdir` | 新建文件夹 | 是 |
 | POST | `/upload/chunk` | 上传单个分片 | 是 |
 | POST | `/upload/merge` | 合并分片 | 是 |
 
@@ -242,6 +246,119 @@
 |------|--------|------|
 | 请求体格式错误或 filename 为空 | 400 | Bad Request |
 | 任务不存在 | 404 | Not Found: No such task in progress |
+| 方法不是 POST | 405 | Method Not Allowed |
+
+---
+
+## POST `/delete`
+
+删除指定文件或目录（递归删除）。
+
+### 请求参数
+
+| 位置 | 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|------|
+| Header | `Authorization` | string | 是 | `Bearer <token>` |
+| Body (JSON) | `path` | string | 是 | 要删除的文件/目录路径（相对路径） |
+
+### 正确回复
+
+| 状态码 | 说明 |
+|--------|------|
+| 204 | 删除成功，无响应体 |
+
+### 错误回复
+
+| 场景 | 状态码 | 说明 |
+|------|--------|------|
+| 请求体字段缺失 | 400 | Bad Request |
+| 路径包含非法字符 | 400 | Bad Request: Forbidden path |
+| 目标不存在 | 404 | Not Found |
+| 方法不是 POST | 405 | Method Not Allowed |
+
+---
+
+## POST `/rename`
+
+重命名或移动文件/目录。源路径和目标路径不同时为移动操作。
+
+### 请求参数
+
+| 位置 | 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|------|
+| Header | `Authorization` | string | 是 | `Bearer <token>` |
+| Body (JSON) | `path` | string | 是 | 源文件/目录路径（相对路径） |
+| Body (JSON) | `dst` | string | 是 | 目标路径（相对路径） |
+
+### 正确回复
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `path` | string | 最终落盘路径（自动续号处理冲突后的实际文件名） |
+
+### 错误回复
+
+| 场景 | 状态码 | 说明 |
+|------|--------|------|
+| 请求体字段缺失 | 400 | Bad Request |
+| 路径包含非法字符 | 400 | Bad Request: Forbidden path |
+| 源文件不存在 | 404 | Not Found |
+| 方法不是 POST | 405 | Method Not Allowed |
+
+---
+
+## POST `/copy`
+
+复制文件或目录到目标位置。操作先在临时目录完成拷贝，再通过串行队列原子落盘，目标路径冲突时自动续号。
+
+### 请求参数
+
+| 位置 | 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|------|
+| Header | `Authorization` | string | 是 | `Bearer <token>` |
+| Body (JSON) | `path` | string | 是 | 源文件/目录路径（相对路径） |
+| Body (JSON) | `dst` | string | 是 | 目标路径（相对路径） |
+
+### 正确回复
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `path` | string | 最终落盘路径（自动续号处理冲突后的实际文件名） |
+
+### 错误回复
+
+| 场景 | 状态码 | 说明 |
+|------|--------|------|
+| 请求体字段缺失 | 400 | Bad Request |
+| 路径包含非法字符 | 400 | Bad Request: Forbidden path |
+| 源文件不存在 | 404 | Not Found |
+| 方法不是 POST | 405 | Method Not Allowed |
+
+---
+
+## POST `/mkdir`
+
+在指定路径创建新文件夹。路径冲突时自动续号。
+
+### 请求参数
+
+| 位置 | 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|------|
+| Header | `Authorization` | string | 是 | `Bearer <token>` |
+| Body (JSON) | `path` | string | 是 | 要创建的文件夹路径（相对路径） |
+
+### 正确回复
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `path` | string | 最终创建的文件夹路径 |
+
+### 错误回复
+
+| 场景 | 状态码 | 说明 |
+|------|--------|------|
+| 请求体字段缺失 | 400 | Bad Request |
+| 路径包含非法字符 | 400 | Bad Request: Forbidden path |
 | 方法不是 POST | 405 | Method Not Allowed |
 
 ---

@@ -9,6 +9,7 @@
 ## 功能
 
 - 文件浏览、上传、下载
+- 文件管理：重命名/移动、复制、删除、新建文件夹
 - 远程 URL 下载到服务器
 - 分片上传 + xxhash 完整性校验
 - JWT 登录鉴权 + Token 自动续签
@@ -86,6 +87,10 @@ users:
 | POST | `/remote-upload` | 从 URL 下载文件到服务器 | 是 |
 | GET  | `/progress` | 查看远程下载进度 | 是 |
 | POST | `/cancel` | 取消远程下载任务 | 是 |
+| POST | `/delete` | 删除文件或目录 | 是 |
+| POST | `/rename` | 重命名 / 移动文件或目录 | 是 |
+| POST | `/copy` | 复制文件或目录 | 是 |
+| POST | `/mkdir` | 新建文件夹 | 是 |
 
 鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
 

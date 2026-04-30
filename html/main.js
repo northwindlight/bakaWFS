@@ -26,6 +26,18 @@ createApp({
         const lastProgress = ref({});
         const uploadTasks = ref({});
         let pollingInterval = null;
+
+        // 文件操作状态
+        const opsPanelFor = ref(null);
+        const showRenameModal = ref(false);
+        const showCopyModal = ref(false);
+        const showDeleteConfirm = ref(false);
+        const opsTarget = ref(null);
+        const pickerStack = ref([]);
+        const renameName = ref('');
+        const copyName = ref('');
+        const showMkdirModal = ref(false);
+        const mkdirName = ref('');
         const filenameToTaskId = {};
 
         const isLoggedIn = ref(!!localStorage.getItem('baka_token'));
@@ -114,7 +126,18 @@ createApp({
                 const res = await fetchWithRetry(`${API_BASE}/list`, {}, 3, 500);
                 const data = await res.json();
                 rootData.value = data;
-                currentDir.value = data;
+                // 恢复当前路径
+                if (pathStack.value.length === 0) {
+                    currentDir.value = data;
+                } else {
+                    let node = data;
+                    const names = pathStack.value.map(p => p.name);
+                    for (const name of names) {
+                        const child = node.children?.find(c => c.name === name && c.type === 'dir');
+                        if (child) { node = child; } else { node = data; break; }
+                    }
+                    currentDir.value = node;
+                }
             } catch (e) {
                 console.error(e);
                 alert(i18n.loadFailed);
@@ -275,6 +298,12 @@ createApp({
             const list = viewerImageList.value;
             if (!list.length) return '';
             return getFileUrl(list[viewerImageIndex.value].name);
+        });
+
+        const pickerDirs = computed(() => {
+            const dir = pickerStack.value.length === 0 ? rootData.value : pickerStack.value[pickerStack.value.length - 1];
+            if (!dir || !dir.children) return [];
+            return dir.children.filter(c => c.type === 'dir').sort((a, b) => naturalCompare(a.name, b.name));
         });
 
         let touchStartX = 0;
@@ -478,6 +507,152 @@ createApp({
             }
         };
 
+        // ── 文件操作 ──────────────────────────────────────────
+        const getItemPath = (item) => {
+            return [...pathStack.value.map(p => p.name), item.name].join('/');
+        };
+
+        const initPicker = () => {
+            pickerStack.value = [...pathStack.value];
+        };
+
+        const toggleOpsPanel = (item, event) => {
+            if (opsPanelFor.value === item) {
+                opsPanelFor.value = null;
+            } else {
+                opsPanelFor.value = item;
+            }
+        };
+
+        const startRename = (item) => {
+            opsPanelFor.value = null;
+            if (!isLoggedIn.value) { showLogin.value = true; alert(i18n.loginFirst); return; }
+            opsTarget.value = item;
+            renameName.value = item.name;
+            initPicker();
+            showRenameModal.value = true;
+        };
+
+        const startCopy = (item) => {
+            opsPanelFor.value = null;
+            if (!isLoggedIn.value) { showLogin.value = true; alert(i18n.loginFirst); return; }
+            opsTarget.value = item;
+            copyName.value = item.name;
+            initPicker();
+            showCopyModal.value = true;
+        };
+
+        const startDelete = (item) => {
+            opsPanelFor.value = null;
+            if (!isLoggedIn.value) { showLogin.value = true; alert(i18n.loginFirst); return; }
+            opsTarget.value = item;
+            showDeleteConfirm.value = true;
+        };
+
+        const pickerEnter = (dir) => {
+            pickerStack.value.push(dir);
+        };
+
+        const pickerGoToLevel = (index) => {
+            if (index < 0) { pickerStack.value = []; return; }
+            pickerStack.value = pickerStack.value.slice(0, index + 1);
+        };
+
+        const getPickerPath = (name) => {
+            const parts = pickerStack.value.map(p => p.name);
+            parts.push(name);
+            return parts.join('/');
+        };
+
+        const confirmRename = async () => {
+            if (!renameName.value.trim()) return;
+            const src = getItemPath(opsTarget.value);
+            const dst = getPickerPath(renameName.value.trim());
+            try {
+                const res = await fetch(`${API_BASE}/rename`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ path: src, dst })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                showRenameModal.value = false;
+                fetchData();
+            } catch (e) {
+                alert(i18n.operationFailed + e.message);
+            }
+        };
+
+        const confirmCopy = async () => {
+            if (!copyName.value.trim()) return;
+            const src = getItemPath(opsTarget.value);
+            const dst = getPickerPath(copyName.value.trim());
+            try {
+                const res = await fetch(`${API_BASE}/copy`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ path: src, dst })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                showCopyModal.value = false;
+                fetchData();
+            } catch (e) {
+                alert(i18n.operationFailed + e.message);
+            }
+        };
+
+        const confirmDelete = async () => {
+            const src = getItemPath(opsTarget.value);
+            try {
+                const res = await fetch(`${API_BASE}/delete`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ path: src })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                showDeleteConfirm.value = false;
+                fetchData();
+            } catch (e) {
+                alert(i18n.operationFailed + e.message);
+            }
+        };
+
+        // ── 新建文件夹 ──────────────────────────────────────
+        const openMkdirModal = () => {
+            if (!isLoggedIn.value) { showLogin.value = true; alert(i18n.loginFirst); return; }
+            mkdirName.value = '';
+            showMkdirModal.value = true;
+        };
+
+        const confirmMkdir = async () => {
+            if (!mkdirName.value.trim()) return;
+            const parts = [...pathStack.value.map(p => p.name), mkdirName.value.trim()];
+            const dst = parts.join('/');
+            try {
+                const res = await fetch(`${API_BASE}/mkdir`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ path: dst })
+                });
+                if (!res.ok) throw new Error(await res.text());
+                showMkdirModal.value = false;
+                fetchData();
+            } catch (e) {
+                alert(i18n.mkdirFailed + e.message);
+            }
+        };
+
         onMounted(async () => {
             if (isLoggedIn.value) await verifyToken();
             fetchData();
@@ -490,6 +665,7 @@ createApp({
         });
 
         return {
+            i18n,
             loading, isLoggedIn, currentUser, showLogin, loginForm, pathStack, sortedFiles,
             handleLogin, handleLogout, handleFileUpload, handleItemClick,
             goHome, goToLevel, formatSize, getFileUrl, downloadFile,
@@ -502,6 +678,13 @@ createApp({
             closeViewer, viewerPrev, viewerNext,
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
+            // 文件操作
+            opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
+            opsTarget, pickerStack, renameName, copyName, pickerDirs,
+            toggleOpsPanel, startRename, startCopy, startDelete,
+            confirmRename, confirmCopy, confirmDelete,
+            pickerEnter, pickerGoToLevel,
+            showMkdirModal, mkdirName, openMkdirModal, confirmMkdir,
         };
     }
 }).mount('#app');
