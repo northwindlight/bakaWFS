@@ -1,7 +1,6 @@
 package fileutil
 
 import (
-	"bakaWFS/internal/dto"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,13 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 )
+
+type Node struct {
+	Name     string  `json:"name"`
+	Type     string  `json:"type"` // "file" or "dir"
+	Size     int64   `json:"size,omitempty"`
+	Children []*Node `json:"children,omitempty"`
+}
 
 func ValidatePath(filename string) error {
 	cleaned := filepath.Clean(filename)
@@ -67,13 +73,13 @@ func CalculateFilexxhash(path string) (string, error) {
 	return fmt.Sprintf("%016x", hash.Sum64()), nil
 }
 
-func ScanDir(path string) (*dto.Node, error) {
+func ScanDir(path string) (*Node, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
-	node := &dto.Node{
+	node := &Node{
 		Name: filepath.Base(path),
 		Type: "file",
 		Size: info.Size(),

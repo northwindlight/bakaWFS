@@ -3,11 +3,15 @@ package handler
 import (
 	"bakaWFS/internal/auth"
 	"bakaWFS/internal/config"
-	"bakaWFS/internal/dto"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 )
+
+type jwtClaims struct {
+	Username string `json:"username"`
+	Token    string `json:"token"`
+}
 
 type AuthHandler struct {
 	auth   *auth.Auth
@@ -36,7 +40,7 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("用户登录失败", "username", creds.Username)
 		return
 	}
-	json.NewEncoder(w).Encode(dto.JwtClaims{Username: creds.Username, Token: token})
+	json.NewEncoder(w).Encode(jwtClaims{Username: creds.Username, Token: token})
 	h.logger.Info("用户登录成功", "username", creds.Username)
 }
 
@@ -54,6 +58,6 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("token 续签失败", "error", err)
 		return
 	}
-	json.NewEncoder(w).Encode(dto.JwtClaims{Username: username, Token: newToken})
+	json.NewEncoder(w).Encode(jwtClaims{Username: username, Token: newToken})
 	h.logger.Info("token 续签成功", "username", username)
 }

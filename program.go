@@ -136,15 +136,21 @@ func main() {
 	mux.HandleFunc("/rename", authMW(fh.HandleRename))
 	mux.HandleFunc("/copy", authMW(fh.HandleCopy))
 	mux.HandleFunc("/mkdir", authMW(fh.HandleMkdir))
-	mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
-	mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
+	if cfg.HtmlEnabled() {
+		mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
+		mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
+	}
 
-	globalHandler := chain(
-		mux,
+	middlewares := []func(http.Handler) http.Handler{
 		handler.RequestLogger(logger),
-		//handler.CORSMiddleware,
-		handler.StatusOK,
-	)
+	}
+	if cfg.CorsEnabled {
+		middlewares = append(middlewares, handler.CORSMiddleware)
+		logger.Info("CORS 跨域支持已启用")
+	}
+	middlewares = append(middlewares, handler.StatusOK)
+
+	globalHandler := chain(mux, middlewares...)
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()

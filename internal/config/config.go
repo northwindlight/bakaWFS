@@ -26,11 +26,14 @@ type Config struct {
 	TempDir         string `yaml:"temp_dir"`
 	DownloadWorkers int    `yaml:"download_workers"`
 	AuditLogPath    string `yaml:"audit_log"`
+	CorsEnabled     bool   `yaml:"cors_enabled"`
 }
 
 func (c *Config) HttpsEnabled() bool { return c.HttpsPort != PortDisabled }
 
 func (c *Config) HttpEnabled() bool { return c.HttpPort != PortDisabled }
+
+func (c *Config) HtmlEnabled() bool { return c.HtmlDir != "" }
 
 type User struct {
 	Username string `yaml:"username" json:"username"`
@@ -58,7 +61,7 @@ key_path:  "private.key"
 
 file_dir:   "files"
 
-# built-in 和 internal 表示使用内置 html
+# built-in / internal = 内置前端，留空禁用前端（纯 API 模式）
 html_dir:   "built-in"
 temp_dir:   ".uploads"
 users_file: "users.yaml"
@@ -68,6 +71,9 @@ download_workers: 2
 
 # 审计日志路径，留空则关闭
 audit_log: ""
+
+# 跨域支持，默认关闭。开启后前端可跨域下载文件，文件下载强制 Content-Disposition: attachment
+cors_enabled: false
 `
 
 var defaultUsersConfig = `

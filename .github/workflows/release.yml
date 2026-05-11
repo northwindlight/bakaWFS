@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -57,6 +59,40 @@ jobs:
     needs: build
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Release Notes
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --oneline --no-merges --format="%s")
+          else
+            COMMITS=$(git log --oneline --no-merges --format="%s" ${PREV_TAG}..HEAD)
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "## ${{ github.ref_name }}" > release_notes.md
+            echo "无新提交。" >> release_notes.md
+            exit 0
+          fi
+
+          jq -n --arg commits "$COMMITS" '{
+            model: "deepseek-v4-flash",
+            max_tokens: 400,
+            messages: [{
+              role: "user",
+              content: "用2-3句简洁中文总结以下提交内容，只描述用户可感知的变化。\n\n\($commits)"
+            }]
+          }' > /tmp/payload.json
+
+          curl -s https://api.deepseek.com/anthropic/v1/messages \
+            -H "x-api-key: ${{ secrets.DEEPSEEK_API_KEY }}" \
+            -H "content-type: application/json" \
+            -d @/tmp/payload.json | jq -r '.content[0].text' > release_notes.md
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -66,4 +102,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: bakaWFS-*
-          generate_release_notes: true
+          body_path: release_notes.md

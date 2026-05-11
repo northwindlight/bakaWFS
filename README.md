@@ -4,7 +4,7 @@
 
 类似 filebrowser，但完全独立实现。后端由我完成，前端约 40% 由 AI 生成。
 
-服务端内置 CORS 中间件（如需启用，取消 `program.go` 中间件链的注释），方便自行编写前端或 CLI 工具。
+配置中开启 `cors_enabled: true` 即可启用 CORS 跨域支持，方便自行编写前端或 CLI 工具。
 
 ## 功能
 
@@ -60,10 +60,12 @@ secret: ""
 cert_path: "certificate.crt"
 key_path:  "private.key"
 file_dir:   "files"      # 文件存储根目录
-html_dir:   "built-in"   # 设为 "built-in" 使用内置前端；也可指定外部目录（加载其中的 index.html）
+html_dir:   "built-in"   # "built-in"=内置前端 / 外部目录路径 / 留空禁用前端（纯 API 模式）
 temp_dir:   ".uploads"   # 临时目录（分片上传、远程下载暂存）
 users_file: "users.yaml"
 download_workers: 2       # 并发远程下载 worker 数
+audit_log: ""             # 审计日志路径，留空关闭
+cors_enabled: false       # 是否启用 CORS 跨域支持
 ```
 
 `users.yaml`：
@@ -81,7 +83,7 @@ users:
 | POST | `/login` | 登录，返回 JWT | 否 |
 | POST | `/verify` | 验证并续签 Token | 是 |
 | GET  | `/list` | 获取文件目录树 | 否 |
-| GET  | `/files/*` | 下载文件（支持 Range / 断点续传） | 否 |
+| GET  | `/files/*` | 下载文件（支持 Range，强制 Content-Disposition: attachment） | 否 |
 | POST | `/upload` | 上传文件（整体上传） | 是 |
 | POST | `/upload/chunk` | 上传单个分片 | 是 |
 | POST | `/upload/merge` | 合并分片 | 是 |
@@ -110,8 +112,7 @@ users:
 ├── internal/
 │   ├── auth/            # JWT 逻辑
 │   ├── config/          # 配置加载与校验
-│   ├── dto/             # 数据结构
-│   ├── fileutil/        # 文件工具函数（含 xxhash 校验）
+│   ├── fileutil/        # 文件工具函数（含 xxhash 校验、目录树 DTO）
 │   ├── handler/         # HTTP handler 与中间件
 │   └── task/            # 远程下载任务管理
 ├── files/               # 文件存储目录

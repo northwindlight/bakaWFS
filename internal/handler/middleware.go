@@ -4,10 +4,12 @@ import (
 	"bakaWFS/internal/auth"
 	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -17,13 +19,14 @@ type contextKey string
 const ContextKeyUsername contextKey = "username"
 const ContextKeyToken contextKey = "token"
 
-// FileServerHandler 限制只允许 GET。
+// FileServerHandler 限制只允许 GET，并强制 Content-Disposition: attachment。
 func FileServerHandler(fs http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(r.URL.Path)))
 		fs.ServeHTTP(w, r)
 	}
 }
@@ -109,12 +112,13 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// CORSMiddleware 添加跨域响应头。
+// CORSMiddleware 添加跨域响应头，包括 Content-Disposition 的暴露。
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range, Authorization, X-Upload-Filename, X-Chunk-Index")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
 		next.ServeHTTP(w, r)
 	})
 }
