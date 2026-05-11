@@ -81,7 +81,8 @@ jobs:
 
           jq -n --arg commits "$COMMITS" '{
             model: "deepseek-v4-flash",
-            max_tokens: 800,
+            max_tokens: 400,
+            thinking: {type: "disabled"},
             messages: [{
               role: "user",
               content: "用2-3句简洁中文总结以下提交内容，只描述用户可感知的变化。\n\n\($commits)"
