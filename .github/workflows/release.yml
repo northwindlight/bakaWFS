@@ -85,7 +85,7 @@ jobs:
             thinking: {type: "disabled"},
             messages: [{
               role: "user",
-              content: "用2-3句简洁中文总结以下提交内容，只描述用户可感知的变化。\n\n\($commits)"
+              content: "用2-3句简洁中文总结以下提交内容，只描述用户可感知的功能变化。忽略CI、构建、工具链、bug修复类提交。\n\n\($commits)"
             }]
           }' > /tmp/payload.json
 
