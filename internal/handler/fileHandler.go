@@ -508,8 +508,26 @@ func (h *FileHandler) HandleCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcPath := filepath.Join(h.cfg.DirPath, req.Path)
-	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
+	srcInfo, err := os.Stat(srcPath)
+	if os.IsNotExist(err) {
 		http.Error(w, "Not Found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("复制: stat 失败", "src", req.Path, "error", err)
+		return
+	}
+
+	if srcInfo.IsDir() {
+		dstPath := filepath.Join(h.cfg.DirPath, req.Dst)
+		if err := fileutil.CopyDir(srcPath, dstPath); err != nil {
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			h.logger.Error("复制目录失败", "src", req.Path, "dst", req.Dst, "error", err)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"path": req.Dst})
+		h.logger.Info("目录已复制", "src", req.Path, "dst", req.Dst, "user", username)
 		return
 	}
 
