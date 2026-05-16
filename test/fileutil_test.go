@@ -2,9 +2,11 @@ package test
 
 import (
 	"bakaWFS/internal/fileutil"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestValidatePath(t *testing.T) {
@@ -176,4 +178,128 @@ func TestScanDirFile(t *testing.T) {
 	if node.Type != "file" || node.Size != 2 {
 		t.Errorf("expected file size 2, got type=%s size=%d", node.Type, node.Size)
 	}
+}
+
+func TestCopyFile(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.txt")
+	dst := filepath.Join(dir, "dst.txt")
+	content := []byte("copy me")
+	os.WriteFile(src, content, 0644)
+
+	if err := fileutil.CopyFile(src, dst); err != nil {
+		t.Fatalf("CopyFile: %v", err)
+	}
+
+	got, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read dst: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("content mismatch: got %q, want %q", string(got), string(content))
+	}
+
+	// source should still exist
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		t.Error("source should not be removed after copy")
+	}
+}
+
+func TestCopyFileNotFound(t *testing.T) {
+	if err := fileutil.CopyFile("/nonexistent", "/tmp/out"); err == nil {
+		t.Error("expected error for nonexistent source")
+	}
+}
+
+func TestCopyDir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "srcdir")
+	dst := filepath.Join(dir, "dstdir")
+
+	// create source tree: srcdir/
+	//   a.txt
+	//   sub/
+	//     b.txt
+	os.MkdirAll(filepath.Join(src, "sub"), 0755)
+	os.WriteFile(filepath.Join(src, "a.txt"), []byte("top"), 0644)
+	os.WriteFile(filepath.Join(src, "sub", "b.txt"), []byte("nested"), 0644)
+
+	if err := fileutil.CopyDir(src, dst); err != nil {
+		t.Fatalf("CopyDir: %v", err)
+	}
+
+	// check structure
+	for _, p := range []string{
+		filepath.Join(dst, "a.txt"),
+		filepath.Join(dst, "sub"),
+		filepath.Join(dst, "sub", "b.txt"),
+	} {
+		if _, err := os.Stat(p); os.IsNotExist(err) {
+			t.Errorf("expected %s to exist", p)
+		}
+	}
+
+	// check content
+	b, _ := os.ReadFile(filepath.Join(dst, "a.txt"))
+	if string(b) != "top" {
+		t.Errorf("a.txt: got %q, want %q", string(b), "top")
+	}
+	b, _ = os.ReadFile(filepath.Join(dst, "sub", "b.txt"))
+	if string(b) != "nested" {
+		t.Errorf("b.txt: got %q, want %q", string(b), "nested")
+	}
+
+	// source should still exist
+	if _, err := os.Stat(src); os.IsNotExist(err) {
+		t.Error("source dir should not be removed")
+	}
+}
+
+func TestCopyDirNotDir(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "file.txt")
+	os.WriteFile(src, []byte("x"), 0644)
+	if err := fileutil.CopyDir(src, filepath.Join(dir, "out")); err == nil {
+		t.Error("expected error when source is not a directory")
+	}
+}
+
+func TestCleanStaleChunks(t *testing.T) {
+	dir := t.TempDir()
+
+	// create 3 chunk files
+	for i := 0; i < 3; i++ {
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("abc-%d.chunk", i)), []byte{byte(i)}, 0644)
+	}
+	// create a non-chunk file that should survive
+	os.WriteFile(filepath.Join(dir, "keep.me"), []byte("keep"), 0644)
+
+	// maxAge=0: all chunks just created are older than 0s, should be deleted
+	if err := fileutil.CleanStaleChunks(dir, 0); err != nil {
+		t.Fatalf("CleanStaleChunks: %v", err)
+	}
+	remaining, _ := os.ReadDir(dir)
+	if len(remaining) != 1 || remaining[0].Name() != "keep.me" {
+		t.Errorf("expected only keep.me after maxAge=0, got %v", names(remaining))
+	}
+
+	// recreate chunks, now test with large maxAge — all should survive
+	for i := 0; i < 3; i++ {
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("abc-%d.chunk", i)), []byte{byte(i)}, 0644)
+	}
+	if err := fileutil.CleanStaleChunks(dir, time.Hour); err != nil {
+		t.Fatalf("CleanStaleChunks: %v", err)
+	}
+	remaining, _ = os.ReadDir(dir)
+	if len(remaining) != 4 {
+		t.Errorf("expected 4 entries (3 chunks + keep.me) with maxAge=1h, got %d", len(remaining))
+	}
+}
+
+func names(entries []os.DirEntry) []string {
+	var ns []string
+	for _, e := range entries {
+		ns = append(ns, e.Name())
+	}
+	return ns
 }

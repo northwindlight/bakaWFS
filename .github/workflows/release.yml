@@ -38,6 +38,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./... -race
+
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
