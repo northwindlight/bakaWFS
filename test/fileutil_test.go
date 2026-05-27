@@ -18,6 +18,8 @@ func TestValidatePath(t *testing.T) {
 		{"simple", "file.txt", true},
 		{"subdir", "sub/dir/file.txt", true},
 		{"dotfile", ".hidden", true},
+		{"dotdot_in_name", "my..backup.txt", true},
+		{"dotdot_segment_in_path", "sub/my..backup/file.txt", true},
 		{"absolute", "/etc/passwd", false},
 		{"parent_traversal", "../etc/passwd", false},
 		{"nested_traversal", "sub/../../etc/passwd", false},

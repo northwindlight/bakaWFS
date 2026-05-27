@@ -20,8 +20,13 @@ type Node struct {
 
 func ValidatePath(filename string) error {
 	cleaned := filepath.Clean(filename)
-	if filepath.IsAbs(cleaned) || strings.Contains(cleaned, "..") || strings.HasPrefix(cleaned, "/") {
+	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "/") {
 		return fmt.Errorf("unsafe path detected")
+	}
+	for _, part := range strings.Split(filepath.ToSlash(cleaned), "/") {
+		if part == ".." {
+			return fmt.Errorf("unsafe path detected")
+		}
 	}
 	return nil
 }
@@ -35,7 +40,9 @@ func MoveFile(src, dst string) error {
 		if err := CopyFile(src, dst); err != nil {
 			return err
 		}
-		os.Remove(src)
+		if err := os.Remove(src); err != nil {
+			return fmt.Errorf("移动后删除源文件失败: %w", err)
+		}
 	}
 	return nil
 }

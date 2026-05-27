@@ -4,6 +4,9 @@ import (
 	"bakaWFS/internal/auth"
 	"bakaWFS/internal/config"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 func newTestAuth() *auth.Auth {
@@ -93,5 +96,65 @@ func TestRefreshToken(t *testing.T) {
 	}
 	if username != "baka" {
 		t.Errorf("expected baka, got %s", username)
+	}
+}
+
+// 构造一个签名正确但 claims 缺字段或类型不对的 token，
+// RefreshToken 不能 panic，应返回普通错误。
+func TestRefreshTokenMalformedClaims(t *testing.T) {
+	secret := []byte("test-secret")
+	a := newTestAuth()
+
+	cases := []struct {
+		name   string
+		claims jwt.MapClaims
+	}{
+		{
+			name: "missing_abs_exp",
+			claims: jwt.MapClaims{
+				"username": "baka",
+				"ua":       "ua",
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+			},
+		},
+		{
+			name: "abs_exp_wrong_type",
+			claims: jwt.MapClaims{
+				"username": "baka",
+				"ua":       "ua",
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+				"abs_exp":  "not-a-number",
+			},
+		},
+		{
+			name: "username_wrong_type",
+			claims: jwt.MapClaims{
+				"username": 12345,
+				"ua":       "ua",
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+				"abs_exp":  time.Now().Add(7 * 24 * time.Hour).Unix(),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, tc.claims)
+			signed, err := tok.SignedString(secret)
+			if err != nil {
+				t.Fatalf("sign: %v", err)
+			}
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("RefreshToken panicked on malformed claims: %v", r)
+				}
+			}()
+			if _, err := a.RefreshToken(signed); err == nil {
+				t.Error("expected error for malformed claims")
+			}
+		})
 	}
 }

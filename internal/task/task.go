@@ -40,6 +40,7 @@ type DownloadTask struct {
 	TempDir    string
 	Filename   string
 	Username   string
+	ctx        context.Context
 }
 
 // ── Downloader ──────────────────────────────────────────────
@@ -81,7 +82,7 @@ func (d *Downloader) IsRunning(filename string) bool {
 	return ok
 }
 
-// Enqueue 登记进度、注册占位 cancel，再投入队列。
+// Enqueue 登记进度、注册 cancel，再投入队列。
 // 调用方已确认目标文件不存在。
 func (d *Downloader) Enqueue(task DownloadTask) error {
 	prog := &DownloadProgress{Username: task.Username}
@@ -89,13 +90,15 @@ func (d *Downloader) Enqueue(task DownloadTask) error {
 	if _, loaded := d.progress.LoadOrStore(task.Filename, prog); loaded {
 		return errors.New("下载任务已存在")
 	}
-	// 存一个 nil cancel 占位，worker 启动后替换
-	d.cancels.Store(task.Filename, context.CancelFunc(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	task.ctx = ctx
+	d.cancels.Store(task.Filename, cancel)
 
 	select {
 	case d.queue <- task:
 		return nil
 	default:
+		cancel()
 		d.progress.Delete(task.Filename)
 		d.cancels.Delete(task.Filename)
 		return errors.New("下载队列已满")
@@ -108,9 +111,11 @@ func (d *Downloader) Cancel(filename string) bool {
 	if !ok {
 		return false
 	}
-	if cancel, _ := val.(context.CancelFunc); cancel != nil {
-		cancel()
+	cancel, ok := val.(context.CancelFunc)
+	if !ok || cancel == nil {
+		return false
 	}
+	cancel()
 	return true
 }
 
@@ -141,11 +146,17 @@ type ProgressSnapshot struct {
 
 func (d *Downloader) worker() {
 	for task := range d.queue {
-		ctx, cancel := context.WithCancel(context.Background())
-		// 替换占位 cancel
-		d.cancels.Store(task.Filename, cancel)
+		ctx := task.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		d.execute(ctx, task)
-		cancel() // 确保 context 资源释放
+		// 释放该任务占用的 cancel 资源
+		if val, ok := d.cancels.Load(task.Filename); ok {
+			if cancel, _ := val.(context.CancelFunc); cancel != nil {
+				cancel()
+			}
+		}
 	}
 }
 
@@ -179,8 +190,9 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		return
 	}
 
+	const maxRemoteSize int64 = 100 * 1024 * 1024 * 1024
 	totalSize := resp.ContentLength
-	if totalSize > 100*1024*1024*1024 {
+	if totalSize > maxRemoteSize {
 		d.logger.Warn("远程下载: 文件超过 100GB 限制", "size", totalSize)
 		return
 	}
@@ -203,7 +215,9 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		prog:  prog.(*DownloadProgress),
 		total: totalSize,
 	}
-	_, err = io.Copy(io.MultiWriter(tmpFile, pw), resp.Body)
+	// LimitReader 兜底：chunked 响应 ContentLength 为 -1 时仍能强制限制实际字节
+	limited := io.LimitReader(resp.Body, maxRemoteSize+1)
+	written, err := io.Copy(io.MultiWriter(tmpFile, pw), limited)
 	tmpFile.Close()
 
 	if err != nil {
@@ -212,6 +226,10 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		} else {
 			d.logger.Error("远程下载失败: 传输错误", "error", err)
 		}
+		return
+	}
+	if written > maxRemoteSize {
+		d.logger.Warn("远程下载: 实际传输超过 100GB 限制", "written", written)
 		return
 	}
 

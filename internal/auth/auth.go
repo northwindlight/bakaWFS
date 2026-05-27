@@ -70,10 +70,23 @@ func (a *Auth) RefreshToken(tokenStr string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	claims := token.Claims.(jwt.MapClaims)
-	username := claims["username"].(string)
-	ua := claims["ua"].(string)
-	absExp := int64(claims["abs_exp"].(float64))
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return "", errors.New("无效的令牌")
+	}
+	username, ok := claims["username"].(string)
+	if !ok {
+		return "", errors.New("无效的令牌")
+	}
+	ua, ok := claims["ua"].(string)
+	if !ok {
+		return "", errors.New("无效的令牌")
+	}
+	absExpF, ok := claims["abs_exp"].(float64)
+	if !ok {
+		return "", errors.New("令牌缺少 abs_exp")
+	}
+	absExp := int64(absExpF)
 
 	if now.Unix() > absExp {
 		return "", errors.New("token已超过绝对有效期，请重新登录")

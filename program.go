@@ -185,21 +185,17 @@ func main() {
 		var httpHandler http.Handler
 		if cfg.HttpsEnabled() {
 			// 两者同时开启：HTTP 重定向到 HTTPS
-			var target string
 			httpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				host, _, err := net.SplitHostPort(r.Host)
 				if err != nil {
 					host = r.Host
 				}
+				var target string
 				if cfg.HttpsPort == 443 {
 					target = fmt.Sprintf("https://%s%s", host, r.RequestURI)
 				} else {
 					target = fmt.Sprintf("https://%s:%d%s", host, cfg.HttpsPort, r.RequestURI)
 				}
-				if r.URL.RawQuery != "" {
-					target += "?" + r.URL.RawQuery
-				}
-
 				http.Redirect(w, r, target, http.StatusMovedPermanently)
 			})
 			logger.Info("HTTP 已启动，自动重定向HTTPS", "addr", httpAddr)
