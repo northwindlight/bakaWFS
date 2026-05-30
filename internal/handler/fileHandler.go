@@ -520,10 +520,24 @@ func (h *FileHandler) HandleCopy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if srcInfo.IsDir() {
-		dstPath := filepath.Join(h.cfg.DirPath, req.Dst)
-		if err := fileutil.CopyDir(srcPath, dstPath); err != nil {
+		tempDir := filepath.Join(h.cfg.TempDir, fmt.Sprintf("%d-copydir-%s.tmp", time.Now().UnixNano(), filepath.Base(req.Path)))
+		if err := fileutil.CopyDir(srcPath, tempDir); err != nil {
+			os.RemoveAll(tempDir)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			h.logger.Error("复制目录失败", "src", req.Path, "dst", req.Dst, "error", err)
+			return
+		}
+		dstPath := filepath.Join(h.cfg.DirPath, req.Dst)
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			os.RemoveAll(tempDir)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			h.logger.Error("复制目录: 创建父目录失败", "dst", req.Dst, "error", err)
+			return
+		}
+		if err := os.Rename(tempDir, dstPath); err != nil {
+			os.RemoveAll(tempDir)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			h.logger.Error("复制目录: rename 失败", "src", req.Path, "dst", req.Dst, "error", err)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"path": req.Dst})
