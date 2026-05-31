@@ -1,4 +1,4 @@
-const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, watch, onMounted, onUnmounted, watchEffect } = Vue;
 
 // 导入拆分的模块
 import { i18n } from './i18n.js';
@@ -125,7 +125,9 @@ createApp({
                     const tokenValid = await verifyToken();
                     if (!tokenValid) { loading.value = false; return; }
                 }
-                const res = await fetchWithRetry(`${API_BASE}/list`, {}, 3, 500);
+                const token = localStorage.getItem('baka_token');
+                const listOpts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                const res = await fetchWithRetry(`${API_BASE}/list`, listOpts, 3, 500);
                 const data = await res.json();
                 rootData.value = data;
                 // 恢复当前路径
@@ -237,13 +239,27 @@ createApp({
         const downloadFile = async (fileName) => {
             try {
                 const fileUrl = getFileUrl(fileName);
-                const link = document.createElement('a');
-                link.href = fileUrl;
-                link.download = fileName;
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-                if (link.href.startsWith('blob:')) URL.revokeObjectURL(link.href);
+                const token = localStorage.getItem('baka_token');
+                if (token) {
+                    const res = await fetch(fileUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                    if (!res.ok) throw new Error(`${res.status}`);
+                    const blob = await res.blob();
+                    const blobUrl = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = blobUrl;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(blobUrl);
+                } else {
+                    const link = document.createElement('a');
+                    link.href = fileUrl;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                }
             } catch (error) {
                 console.error('下载失败:', error);
                 alert(i18n.downloadFailed + error.message);
@@ -290,16 +306,32 @@ createApp({
         const viewerFileExt      = ref('');
         const viewerLoading      = ref(false);
 
+        const viewerCurrentImageUrl = ref('');
+        let _prevImageBlobUrl = '';
+
+        const fetchAuthUrl = async (url) => {
+            const token = localStorage.getItem('baka_token');
+            if (!token) return url;
+            const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!res.ok) return url;
+            return URL.createObjectURL(await res.blob());
+        };
+
         const closeViewer = () => {
             viewer.value = { show: false, type: null };
             viewerVideoUrl.value = '';
+            if (_prevImageBlobUrl) { URL.revokeObjectURL(_prevImageBlobUrl); _prevImageBlobUrl = ''; }
+            viewerCurrentImageUrl.value = '';
         };
         const viewerPrev = () => { if (viewerImageIndex.value > 0) viewerImageIndex.value--; };
         const viewerNext = () => { if (viewerImageIndex.value < viewerImageList.value.length - 1) viewerImageIndex.value++; };
-        const viewerCurrentImageUrl = computed(() => {
-            const list = viewerImageList.value;
-            if (!list.length) return '';
-            return getFileUrl(list[viewerImageIndex.value].name);
+
+        watch([viewerImageList, viewerImageIndex], async ([list, idx]) => {
+            if (!list.length) { viewerCurrentImageUrl.value = ''; return; }
+            if (_prevImageBlobUrl) { URL.revokeObjectURL(_prevImageBlobUrl); _prevImageBlobUrl = ''; }
+            const url = await fetchAuthUrl(getFileUrl(list[idx].name));
+            if (url.startsWith('blob:')) _prevImageBlobUrl = url;
+            viewerCurrentImageUrl.value = url;
         });
 
         const pickerDirs = computed(() => {
@@ -336,8 +368,8 @@ createApp({
                 viewerImageIndex.value = idx >= 0 ? idx : 0;
                 viewer.value = { show: true, type: 'image' };
             } else if (ft === 'video') {
-                viewerVideoUrl.value = getFileUrl(name);
                 viewer.value = { show: true, type: 'video' };
+                viewerVideoUrl.value = await fetchAuthUrl(getFileUrl(name));
             } else if (ft === 'text') {
                 viewerTextTooLarge.value = false;
                 viewerTextContent.value  = '';
@@ -348,7 +380,9 @@ createApp({
                     viewerLoading.value = false;
                 } else {
                     try {
-                        const res = await fetch(getFileUrl(name));
+                        const token = localStorage.getItem('baka_token');
+                        const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                        const res = await fetch(getFileUrl(name), opts);
                         viewerTextContent.value = await res.text();
                     } catch(e) {
                         viewerTextContent.value = '读取失败：' + e.message;

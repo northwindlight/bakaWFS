@@ -534,8 +534,8 @@
                     <span class="text-5xl">📦</span>
                     <p class="text-sky-600 font-bold">文件过大，无法预览</p>
                     <p class="text-sky-400 text-sm">{{ formatSize(viewerFileSize) }} · 超过 10 KB 限制</p>
-                    <a :href="getFileUrl(viewerFileName)" :download="viewerFileName"
-                    class="download-btn px-6 py-2 text-sm mt-2 inline-block text-center rounded-xl">下载文件</a>
+                    <button @click="downloadFile(viewerFileName)"
+                    class="download-btn px-6 py-2 text-sm mt-2 inline-block text-center rounded-xl">下载文件</button>
                 </div>
                 <!-- 加载中 -->
                 <div v-else-if="viewerLoading" class="flex items-center justify-center py-16">
@@ -559,9 +559,8 @@
                 <p class="font-bold text-sky-800 break-all text-sm leading-snug">{{ viewerFileName }}</p>
                 <p class="text-sky-400 text-xs mt-1">{{ viewerFileExt || '未知类型' }} · {{ formatSize(viewerFileSize) }}</p>
                 </div>
-                <a :href="getFileUrl(viewerFileName)" :download="viewerFileName"
-                @click="closeViewer"
-                class="download-btn px-8 py-2 text-sm mt-1 inline-block text-center rounded-xl w-full text-center">⬇ 下载</a>
+                <button @click="downloadFile(viewerFileName); closeViewer()"
+                class="download-btn px-8 py-2 text-sm mt-1 inline-block text-center rounded-xl w-full text-center">⬇ 下载</button>
             </div>
             </template>
 

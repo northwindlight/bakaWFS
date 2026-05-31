@@ -9,12 +9,14 @@
 ## 功能
 
 - 文件浏览、上传、下载
-- 文件管理：重命名/移动、复制、删除、新建文件夹
+- 文件管理：重命名/移动、复制（原子操作）、删除、新建文件夹
 - 远程 URL 下载到服务器
 - 分片上传 + xxhash 完整性校验
 - JWT 登录鉴权 + Token 自动续签
 - 并发远程下载任务管理（支持取消和进度追踪）
 - 内置 Web UI（编译时嵌入二进制，也支持外部目录）
+- 鉴权模式：开启后所有接口（含浏览/下载）强制登录，前端打开即显示登录界面
+- 跨平台服务封装：一条命令注册为系统服务并自启动（Linux systemd / Windows SCM / macOS launchd）
 
 ## 预览
 
@@ -30,6 +32,18 @@
 ```
 
 首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`，编辑后重新启动即可。
+
+### 注册为系统服务
+
+```bash
+./bakaWFS install   # 安装并设为自启动
+./bakaWFS start     # 立即启动服务
+./bakaWFS stop      # 停止服务
+./bakaWFS status    # 查看运行状态
+./bakaWFS uninstall # 卸载服务
+```
+
+服务工作目录固定为二进制所在目录，`config.yaml` 与二进制放在同一目录即可。Linux 上需要 root 权限执行 install/uninstall。
 
 ### 首次配置
 
@@ -66,6 +80,7 @@ users_file: "users.yaml"
 download_workers: 2       # 并发远程下载 worker 数
 audit_log: ""             # 审计日志路径，留空关闭
 cors_enabled: false       # 是否启用 CORS 跨域支持
+auth_mode: false          # 鉴权模式：true = 所有接口需登录；false = 开放模式（仅写操作需登录）
 ```
 
 `users.yaml`：
@@ -80,10 +95,11 @@ users:
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
+| GET  | `/api/config` | 获取服务器配置（如 auth_mode） | 否 |
 | POST | `/login` | 登录，返回 JWT | 否 |
 | POST | `/verify` | 验证并续签 Token | 是 |
-| GET  | `/list` | 获取文件目录树 | 否 |
-| GET  | `/files/*` | 下载文件（支持 Range，强制 Content-Disposition: attachment） | 否 |
+| GET  | `/list` | 获取文件目录树 | auth_mode 时需要 |
+| GET  | `/files/*` | 下载文件（支持 Range，强制 Content-Disposition: attachment） | auth_mode 时需要 |
 | POST | `/upload` | 上传文件（整体上传） | 是 |
 | POST | `/upload/chunk` | 上传单个分片 | 是 |
 | POST | `/upload/merge` | 合并分片 | 是 |
@@ -127,6 +143,7 @@ users:
 | [golang-jwt](https://github.com/golang-jwt/jwt) | JWT 认证 |
 | [xxhash](https://github.com/cespare/xxhash) | 分片上传的客户端（Wasm）+ 服务端双重文件完整性校验 |
 | [go-colorable](https://github.com/mattn/go-colorable) | 旧版 Windows CMD 终端色彩回退适配 |
+| [kardianos/service](https://github.com/kardianos/service) | 跨平台系统服务封装（systemd / SCM / launchd） |
 
 ## License
 
