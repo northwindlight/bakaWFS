@@ -27,6 +27,7 @@ type Config struct {
 	DownloadWorkers int    `yaml:"download_workers"`
 	AuditLogPath    string `yaml:"audit_log"`
 	CorsEnabled     bool   `yaml:"cors_enabled"`
+	AuthMode        bool   `yaml:"auth_mode"`
 }
 
 func (c *Config) HttpsEnabled() bool { return c.HttpsPort != PortDisabled }
@@ -74,6 +75,9 @@ audit_log: ""
 
 # 跨域支持，默认关闭。开启后前端可跨域下载文件，文件下载强制 Content-Disposition: attachment
 cors_enabled: false
+
+# 鉴权模式。true = 所有接口（含浏览/下载）均需登录；false = 开放模式（仅写操作需登录）
+auth_mode: false
 `
 
 var defaultUsersConfig = `

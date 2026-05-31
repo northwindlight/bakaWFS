@@ -43,6 +43,7 @@ createApp({
         const isLoggedIn = ref(!!localStorage.getItem('baka_token'));
         const currentUser = ref(localStorage.getItem('baka_user') || '');
         const loginForm = ref({ username: '', password: '' });
+        const authMode = ref(false);
 
         // 验证 token
         const verifyToken = async () => {
@@ -89,6 +90,7 @@ createApp({
                 currentUser.value = data.username;
                 showLogin.value = false;
                 loginForm.value = { username: '', password: '' };
+                if (!rootData.value) fetchData();
             } catch (e) {
                 alert(i18n.errorPrefix + e.message);
             }
@@ -673,6 +675,19 @@ createApp({
         };
 
         onMounted(async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/config`);
+                if (res.ok) {
+                    const data = await res.json();
+                    authMode.value = !!data.auth_mode;
+                }
+            } catch (_) {}
+
+            if (authMode.value && !isLoggedIn.value) {
+                showLogin.value = true;
+                return;
+            }
+
             if (isLoggedIn.value) await verifyToken();
             fetchData();
             window.addEventListener('keydown', onViewerKeydown);
@@ -685,7 +700,7 @@ createApp({
 
         return {
             i18n,
-            loading, isLoggedIn, currentUser, showLogin, loginForm, pathStack, sortedFiles,
+            loading, isLoggedIn, currentUser, showLogin, loginForm, authMode, pathStack, sortedFiles,
             handleLogin, handleLogout, handleFileUpload, handleItemClick,
             goHome, goToLevel, formatSize, getFileUrl, downloadFile,
             showRemoteModal, showProgressModal, showUploadMenu, remoteUrl, progressData,

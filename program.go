@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kardianos/service"
 	"github.com/lmittmann/tint"
 )
 
@@ -31,70 +32,193 @@ func chain(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.
 
 func printLogo(out io.Writer) {
 	logo := `
- ____          _  __          
-|  _ \   /\   | |/ /   /\     
-| |_) | /  \  | ' /   /  \    
-|  _ < / /\ \ |  <   / /\ \   
-| |_) / ____ \| . \ / ____ \  
-|____/_/    \_\_|\_\_/    \_\ 
-__          __ ______  _____ 
+ ____          _  __
+|  _ \   /\   | |/ /   /\
+| |_) | /  \  | ' /   /  \
+|  _ < / /\ \ |  <   / /\ \
+| |_) / ____ \| . \ / ____ \
+|____/_/    \_\_|\_\_/    \_\
+__          __ ______  _____
 \ \        / /|  ____|/ ____|
- \ \  /\  / / | |__  | (___  
-  \ \/  \/ /  |  __|  \___ \ 
+ \ \  /\  / / | |__  | (___
+  \ \/  \/ /  |  __|  \___ \
    \  /\  /   | |     ____) |
     \/  \/    |_|    |_____/
 `
 	fmt.Fprintf(out, "%s%s%s\n", "\033[36m", logo, "\033[0m")
 }
 
-func main() {
+// program 实现 service.Interface，持有服务器停止通道
+type program struct {
+	stopCh chan struct{}
+}
+
+func (p *program) Start(s service.Service) error {
+	p.stopCh = make(chan struct{})
+	go p.run()
+	return nil
+}
+
+func (p *program) Stop(s service.Service) error {
+	close(p.stopCh)
+	return nil
+}
+
+func (p *program) run() {
 	output := setupOutput()
 	logger := slog.New(tint.NewHandler(output, &tint.Options{
 		TimeFormat: "15:04:05",
 	}))
+	if err := startServer(logger, output, p.stopCh); err != nil {
+		logger.Error("服务器运行失败", "error", err)
+	}
+}
+
+func main() {
+	// 解析子命令
+	var cmd string
+	if len(os.Args) >= 2 {
+		cmd = os.Args[1]
+	}
+
+	svcConfig := &service.Config{
+		Name:        "bakaWFS",
+		DisplayName: "bakaWFS File Server",
+		Description: "baka self-hosted file server",
+		WorkingDirectory: func() string {
+			exe, err := os.Executable()
+			if err != nil {
+				return "."
+			}
+			return filepath.Dir(exe)
+		}(),
+	}
+
+	prg := &program{}
+	svc, err := service.New(prg, svcConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "创建服务失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch cmd {
+	case "install":
+		if err := svc.Install(); err != nil {
+			fmt.Fprintf(os.Stderr, "安装服务失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("服务已安装，将在系统启动时自动运行")
+		fmt.Println("使用 bakaWFS start 立即启动")
+
+	case "uninstall":
+		if err := svc.Uninstall(); err != nil {
+			fmt.Fprintf(os.Stderr, "卸载服务失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("服务已卸载")
+
+	case "start":
+		if err := svc.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "启动服务失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("服务已启动")
+
+	case "stop":
+		if err := svc.Stop(); err != nil {
+			fmt.Fprintf(os.Stderr, "停止服务失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("服务已停止")
+
+	case "status":
+		st, err := svc.Status()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "查询状态失败: %v\n", err)
+			os.Exit(1)
+		}
+		switch st {
+		case service.StatusRunning:
+			fmt.Println("服务状态: 运行中")
+		case service.StatusStopped:
+			fmt.Println("服务状态: 已停止")
+		default:
+			fmt.Println("服务状态: 未安装或未知")
+		}
+
+	case "run", "":
+		// 直接前台运行（默认行为）
+		if service.Interactive() {
+			// 前台终端运行
+			output := setupOutput()
+			logger := slog.New(tint.NewHandler(output, &tint.Options{
+				TimeFormat: "15:04:05",
+			}))
+			stopCh := make(chan struct{})
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-sigCh
+				close(stopCh)
+			}()
+			if err := startServer(logger, output, stopCh); err != nil {
+				logger.Error("服务器运行失败", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			// 由服务管理器拉起
+			if err := svc.Run(); err != nil {
+				fmt.Fprintf(os.Stderr, "服务运行失败: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "未知命令: %s\n", cmd)
+		fmt.Fprintf(os.Stderr, "用法: bakaWFS [install|uninstall|start|stop|status|run]\n")
+		os.Exit(1)
+	}
+}
+
+func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) error {
 	cfgPath := filepath.Join(".", "config.yaml")
 	if _, err := os.Stat(cfgPath); err != nil {
 		logger.Warn("配置文件不存在，已生成默认配置，生产环境请修改默认配置文件", "默认路径:", cfgPath)
 		if err := config.EnsureConfig(cfgPath); err != nil {
-			logger.Error("初始化配置失败", "error", err)
-			waitAndExit()
+			return fmt.Errorf("初始化配置失败: %w", err)
 		}
 	}
 
 	cfg, err := config.LoadYAML[config.Config](cfgPath)
 	if err != nil {
-		logger.Error("加载配置失败", "error", err)
-		waitAndExit()
+		return fmt.Errorf("加载配置失败: %w", err)
 	}
 	if err := cfg.Validate(); err != nil {
-		logger.Error("配置校验失败", "error", err)
-		waitAndExit()
+		return fmt.Errorf("配置校验失败: %w", err)
 	}
 
 	if _, err := os.Stat(cfg.UsersPath); err != nil {
 		logger.Warn("用户配置文件不存在，已生成默认配置，请迅速修改密码，如果在公网环境，请配置HTTPS", "用户配置路径:", cfg.UsersPath)
 		if err := config.EnsureUsersConfig(cfg.UsersPath); err != nil {
-			logger.Error("初始化用户配置失败", "error", err)
-			waitAndExit()
+			return fmt.Errorf("初始化用户配置失败: %w", err)
 		}
 	}
 
 	usersCfg, err := config.LoadYAML[config.UsersConfig](cfg.UsersPath)
 	if err != nil {
-		logger.Error("加载用户配置失败", "error", err)
-		waitAndExit()
+		return fmt.Errorf("加载用户配置失败: %w", err)
 	}
 
 	logger.Info("配置加载成功", "address", cfg.Address,
 		"https_port", cfg.HttpsPort, "http_port", cfg.HttpPort,
-		"download_workers", cfg.DownloadWorkers)
+		"download_workers", cfg.DownloadWorkers,
+		"auth_mode", cfg.AuthMode)
 
 	var tlsConfig *tls.Config
 	if cfg.HttpsEnabled() {
 		cert, err := tls.LoadX509KeyPair(cfg.CertPath, cfg.KeyPath)
 		if err != nil {
-			logger.Error("加载证书失败", "error", err)
-			waitAndExit()
+			return fmt.Errorf("加载证书失败: %w", err)
 		}
 		logger.Info("加载证书成功", "cert", cfg.CertPath, "key", cfg.KeyPath)
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
@@ -102,28 +226,33 @@ func main() {
 
 	tempDir := filepath.Join(".", cfg.TempDir)
 	if err := cleanTempDir(tempDir, logger); err != nil {
-		logger.Error("清理临时目录失败", "error", err)
-		waitAndExit()
+		return fmt.Errorf("清理临时目录失败: %w", err)
 	}
 
 	queue, err := fileops.New(logger, cfg.AuditLogPath)
 	if err != nil {
-		logger.Error("初始化审计日志失败", "error", err)
-		waitAndExit()
+		return fmt.Errorf("初始化审计日志失败: %w", err)
 	}
 
 	authSvc := auth.NewAuth(cfg, usersCfg)
 	downloader := task.NewDownloader(cfg.DownloadWorkers, logger, queue)
 	downloader.Start()
 
-	ah := handler.NewAuthHandler(authSvc, logger)
+	ah := handler.NewAuthHandler(authSvc, logger, cfg.AuthMode)
 	fh := handler.NewFileHandler(cfg, logger, downloader, queue)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/list", fh.HandleNode)
-	mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
+	mux.HandleFunc("/api/config", ah.HandleServerConfig)
+	if cfg.AuthMode {
+		mux.HandleFunc("/list", authMW(fh.HandleNode))
+		mux.HandleFunc("/files/", authMW(handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath))))))
+		logger.Info("鉴权模式已启用，所有接口需登录")
+	} else {
+		mux.HandleFunc("/list", fh.HandleNode)
+		mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
+	}
 	mux.HandleFunc("/login", ah.HandleLogin)
 	mux.HandleFunc("/upload", authMW(fh.HandleUpload))
 	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
@@ -151,6 +280,7 @@ func main() {
 	middlewares = append(middlewares, handler.StatusOK)
 
 	globalHandler := chain(mux, middlewares...)
+
 	go func() {
 		ticker := time.NewTicker(1 * time.Hour)
 		defer ticker.Stop()
@@ -160,6 +290,7 @@ func main() {
 			}
 		}
 	}()
+
 	printLogo(output)
 	logger.Info("baka文件服务器已启动")
 
@@ -184,7 +315,6 @@ func main() {
 		httpAddr := fmt.Sprintf("%s:%d", cfg.Address, cfg.HttpPort)
 		var httpHandler http.Handler
 		if cfg.HttpsEnabled() {
-			// 两者同时开启：HTTP 重定向到 HTTPS
 			httpHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				host, _, err := net.SplitHostPort(r.Host)
 				if err != nil {
@@ -214,13 +344,15 @@ func main() {
 		}()
 	}
 
-	if err := <-errCh; err != nil {
-		logger.Error("服务器启动失败", "error", err)
-		waitAndExit()
+	select {
+	case err := <-errCh:
+		return err
+	case <-stopCh:
+		logger.Info("收到停止信号，服务器退出")
+		return nil
 	}
 }
 
-// cleanTempDir 删除 tempDir 下的所有 .tmp 文件
 func cleanTempDir(dir string, logger *slog.Logger) error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("创建临时目录失败: %w", err)

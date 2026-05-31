@@ -92,7 +92,28 @@
 <body class="p-4 md:p-8">
 
 <div id="app" class="max-w-5xl mx-auto">
-    
+
+    <!-- 鉴权模式全屏登录 -->
+    <div v-if="authMode && !isLoggedIn" class="min-h-screen flex items-center justify-center -mt-8">
+        <div class="glass p-8 w-full max-w-sm">
+            <div class="flex flex-col items-center mb-6">
+                <img src="baka.png" class="w-20 h-20 baka-float mb-3" alt="baka">
+                <h2 class="text-2xl font-black text-sky-700">⑨ 冰窖需要身份验证</h2>
+                <p class="text-sky-500 text-xs mt-1">登录后才能进入</p>
+            </div>
+            <input v-model="loginForm.username" type="text" placeholder="名字"
+                class="w-full mb-3 p-3 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-300 outline-none text-sm">
+            <input v-model="loginForm.password" type="password" placeholder="口令"
+                @keyup.enter="handleLogin"
+                class="w-full mb-4 p-3 rounded-lg border-none ring-2 ring-sky-100 focus:ring-sky-300 outline-none text-sm">
+            <button @click="handleLogin"
+                class="w-full bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">
+                认领身份
+            </button>
+        </div>
+    </div>
+
+    <template v-if="!authMode || isLoggedIn">
     <header class="flex flex-col items-center mb-8 relative">
         <div class="absolute -top-2 -right-2 md:right-0 md:top-0 transform scale-90 md:scale-100 origin-top-right z-10">
             <button @click="isLoggedIn ? handleLogout() : (showLogin = !showLogin)"
@@ -546,6 +567,7 @@
 
         </div>
     </teleport>
+    </template><!-- end auth guard -->
 </div>
 
 </body>

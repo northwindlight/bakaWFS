@@ -14,12 +14,18 @@ type jwtClaims struct {
 }
 
 type AuthHandler struct {
-	auth   *auth.Auth
-	logger *slog.Logger
+	auth    *auth.Auth
+	logger  *slog.Logger
+	authMode bool
 }
 
-func NewAuthHandler(auth *auth.Auth, logger *slog.Logger) *AuthHandler {
-	return &AuthHandler{auth: auth, logger: logger}
+func NewAuthHandler(auth *auth.Auth, logger *slog.Logger, authMode bool) *AuthHandler {
+	return &AuthHandler{auth: auth, logger: logger, authMode: authMode}
+}
+
+func (h *AuthHandler) HandleServerConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"auth_mode": h.authMode})
 }
 
 func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
