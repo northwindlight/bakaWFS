@@ -1,6 +1,6 @@
 module bakaWFS
 
-go 1.24.3
+go 1.25.0
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0
@@ -14,4 +14,5 @@ require (
 require (
 	github.com/kardianos/service v1.2.4 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	golang.org/x/image v0.41.0 // indirect
 )

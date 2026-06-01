@@ -87,6 +87,15 @@
         /* 隐藏滚动条 */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-thumb { background: #81D4FA; border-radius: 10px; }
+        .footer {
+            text-align: center;
+            padding: 1.5rem 0 0.5rem;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .footer a { color: #94a3b8; text-decoration: none; }
+        .footer a:hover { color: #38bdf8; }
+        .footer .sep { margin: 0 0.5rem; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -110,6 +119,9 @@
                 class="w-full bg-sky-500 text-white py-2 rounded-lg font-bold hover:bg-sky-600 transition">
                 认领身份
             </button>
+            <div class="footer" style="padding-top:1.25rem; padding-bottom:0;">
+                <a href="https://github.com/northwindlight/bakaWFS" target="_blank" rel="noopener">GitHub</a>
+            </div>
         </div>
     </div>
 
@@ -403,7 +415,11 @@
                             
                             <div class="flex items-center gap-3 md:gap-4 flex-1 min-w-0">
                                 
-                                <span class="text-2xl md:text-3xl shrink-0">
+                                <img v-if="item.type === 'file' && isImageFile(item.name) && thumbMap[item.name]"
+                                    :src="thumbMap[item.name]"
+                                    class="shrink-0 w-10 h-10 md:w-12 md:h-12 rounded-lg object-cover bg-sky-50"
+                                    draggable="false">
+                                <span v-else class="text-2xl md:text-3xl shrink-0 w-10 h-10 md:w-12 md:h-12 flex items-center justify-center">
                                     {{ item.type === 'dir' ? '📁' : fileTypeIcon(item.name) }}
                                 </span>
 
@@ -491,11 +507,17 @@
                 <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs bg-black/30 px-3 py-1 rounded-full max-w-[80vw] truncate">
                 {{ viewerImageList[viewerImageIndex]?.name }}
                 </div>
-                <!-- 图片：key 按当前页文件名，翻页强制重建，不残留上一张 -->
-                <img v-if="viewerCurrentImageUrl" :src="viewerCurrentImageUrl" :key="viewerImageList[viewerImageIndex]?.name"
-                    class="max-h-screen max-w-screen object-contain select-none"
+                <!-- 主图：key 按当前页文件名，翻页强制重建绝不残留上一张；中→原图升级 name 不变 src 平滑切换 -->
+                <img v-if="viewerCurrentImageUrl" :src="viewerCurrentImageUrl" :key="'main-'+(viewerImageList[viewerImageIndex]?.name)"
+                    @load="viewerImageReady = true"
+                    class="absolute inset-0 m-auto object-contain select-none"
                     style="max-height:90vh;max-width:90vw;"
+                    :style="{ opacity: viewerImageReady ? 1 : 0, transition: 'opacity 0.4s ease' }"
                     draggable="false">
+                <!-- 加载中：中图还没到时显示一个旋转图标 -->
+                <div v-if="!viewerImageReady" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    <div class="text-4xl animate-bounce">🧊</div>
+                </div>
                 <!-- 翻页按钮（‹ › 字形基线偏下，用内层 span + 负 margin 视觉居中）-->
                 <button v-if="viewerImageIndex > 0" @click="viewerPrev"
                 class="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">
@@ -568,6 +590,11 @@
 
         </div>
     </teleport>
+
+    <div class="footer">
+        <a href="https://github.com/northwindlight/bakaWFS" target="_blank" rel="noopener">GitHub</a>
+    </div>
+
     </template><!-- end auth guard -->
 </div>
 

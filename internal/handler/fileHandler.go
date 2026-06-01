@@ -5,6 +5,8 @@ import (
 	"bakaWFS/internal/fileops"
 	"bakaWFS/internal/fileutil"
 	"bakaWFS/internal/task"
+	"bakaWFS/internal/thumb"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,14 +25,16 @@ type FileHandler struct {
 	logger     *slog.Logger
 	downloader *task.Downloader
 	queue      *fileops.Queue
+	thumb      *thumb.Generator
 }
 
-func NewFileHandler(cfg config.Config, logger *slog.Logger, downloader *task.Downloader, queue *fileops.Queue) *FileHandler {
+func NewFileHandler(cfg config.Config, logger *slog.Logger, downloader *task.Downloader, queue *fileops.Queue, thumbGen *thumb.Generator) *FileHandler {
 	return &FileHandler{
 		cfg:        cfg,
 		logger:     logger,
 		downloader: downloader,
 		queue:      queue,
+		thumb:      thumbGen,
 	}
 }
 
@@ -47,6 +52,102 @@ func (h *FileHandler) HandleNode(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewEncoder(w).Encode(rootNode); err != nil {
 		h.logger.Error("JSON编码失败", "error", err)
+	}
+}
+
+// HandleThumb 返回 /thumb/<相对路径> 对应文件的 LQIP 缩略图（JPEG）。
+func (h *FileHandler) HandleThumb(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/thumb/")
+	decoded, err := url.PathUnescape(rel)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if err := fileutil.ValidatePath(decoded); err != nil {
+		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	if !thumb.Supported(decoded) {
+		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
+		return
+	}
+	sz := thumb.ParseSize(r.URL.Query().Get("size"))
+	srcPath := filepath.Join(h.cfg.DirPath, decoded)
+	data, err := h.thumb.Get(srcPath, sz)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Warn("生成缩略图失败", "path", decoded, "error", err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(data)
+}
+
+// thumbBatchMax 单次批量请求最多处理的路径数，防滥用。
+const thumbBatchMax = 500
+
+// HandleThumbBatch 批量返回多张 LQIP 缩略图，自描述二进制流：
+//
+//	[uint32 entry数量]
+//	每个 entry: [uint16 路径长][路径 UTF-8][uint32 JPEG长][JPEG 字节]
+//
+// 生成失败的图直接跳过（不计入 entry），前端据此回退占位图标。
+func (h *FileHandler) HandleThumbBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256*1024)
+	var req struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	if len(req.Paths) > thumbBatchMax {
+		req.Paths = req.Paths[:thumbBatchMax]
+	}
+
+	type entry struct {
+		path string
+		data []byte
+	}
+	entries := make([]entry, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		if err := fileutil.ValidatePath(p); err != nil || !thumb.Supported(p) {
+			continue
+		}
+		data, err := h.thumb.Get(filepath.Join(h.cfg.DirPath, p), thumb.SizeList)
+		if err != nil {
+			continue // 单图失败跳过
+		}
+		entries = append(entries, entry{path: p, data: data})
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(entries)))
+	w.Write(hdr[:])
+	for _, e := range entries {
+		pb := []byte(e.path)
+		var lb [2]byte
+		binary.BigEndian.PutUint16(lb[:], uint16(len(pb)))
+		w.Write(lb[:])
+		w.Write(pb)
+		var db [4]byte
+		binary.BigEndian.PutUint32(db[:], uint32(len(e.data)))
+		w.Write(db[:])
+		w.Write(e.data)
 	}
 }
 

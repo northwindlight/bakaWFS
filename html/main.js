@@ -1,4 +1,4 @@
-const { createApp, ref, computed, watch, onMounted, onUnmounted, watchEffect } = Vue;
+const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
 
 // 导入拆分的模块
 import { i18n } from './i18n.js';
@@ -236,6 +236,12 @@ createApp({
             return `${API_BASE}/files/${pathParts.join('/')}`;
         };
 
+        const getThumbUrl = (fileName) => {
+            if (!rootData.value) return '';
+            const pathParts = [...pathStack.value.map(p => p.name), fileName];
+            return `${API_BASE}/thumb/${pathParts.map(encodeURIComponent).join('/')}`;
+        };
+
         const downloadFile = async (fileName) => {
             try {
                 const fileUrl = getFileUrl(fileName);
@@ -275,6 +281,83 @@ createApp({
             });
         });
 
+        // ── 列表缩略图批量加载 ───────────────────────
+        // 文件名 -> blob URL（LQIP）。进入目录时批量拉取，列表项据此显示预览。
+        const thumbMap = ref({});
+        const _thumbBlobs = [];           // 已创建的 blob URL，切目录时释放
+        const THUMB_BATCH = 200;
+        let _thumbSeq = 0;
+        const isImageFile = (name) => classifyFile(name) === 'image';
+
+        // 解析二进制流：[uint32 数量]{[uint16 路径长][路径][uint32 图长][JPEG]}
+        const parseThumbStream = (buf) => {
+            const dv = new DataView(buf);
+            let off = 0;
+            const count = dv.getUint32(off); off += 4;
+            const out = [];
+            const dec = new TextDecoder();
+            for (let i = 0; i < count; i++) {
+                const plen = dv.getUint16(off); off += 2;
+                const path = dec.decode(new Uint8Array(buf, off, plen)); off += plen;
+                const dlen = dv.getUint32(off); off += 4;
+                const bytes = new Uint8Array(buf, off, dlen); off += dlen;
+                out.push({ path, blob: new Blob([bytes], { type: 'image/jpeg' }) });
+            }
+            return out;
+        };
+
+        // 拉一批，整批失败自动重试
+        const fetchThumbBatch = async (paths, retries = 2, backoff = 600) => {
+            const token = localStorage.getItem('baka_token');
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            try {
+                const res = await fetch(`${API_BASE}/thumbs`, {
+                    method: 'POST', headers, body: JSON.stringify({ paths })
+                });
+                if (!res.ok) throw new Error(`status ${res.status}`);
+                return parseThumbStream(await res.arrayBuffer());
+            } catch (e) {
+                if (retries > 0) {
+                    await new Promise(r => setTimeout(r, backoff));
+                    return fetchThumbBatch(paths, retries - 1, backoff * 1.5);
+                }
+                return []; // 重试耗尽，这批回退 emoji
+            }
+        };
+
+        const loadThumbnails = async (dir) => {
+            const seq = ++_thumbSeq;
+            // 释放上一目录的 blob
+            for (const u of _thumbBlobs) URL.revokeObjectURL(u);
+            _thumbBlobs.length = 0;
+            thumbMap.value = {};
+            if (!dir || !dir.children) return;
+
+            // 当前目录相对路径前缀
+            const prefix = pathStack.value.map(p => p.name).join('/');
+            const imgs = dir.children.filter(c => c.type === 'file' && isImageFile(c.name));
+            if (!imgs.length) return;
+
+            for (let i = 0; i < imgs.length; i += THUMB_BATCH) {
+                if (seq !== _thumbSeq) return; // 已切到别的目录，停止
+                const slice = imgs.slice(i, i + THUMB_BATCH);
+                const paths = slice.map(f => prefix ? `${prefix}/${f.name}` : f.name);
+                const results = await fetchThumbBatch(paths);
+                if (seq !== _thumbSeq) return;
+                const next = { ...thumbMap.value };
+                for (const { path, blob } of results) {
+                    const url = URL.createObjectURL(blob);
+                    _thumbBlobs.push(url);
+                    const name = path.slice(path.lastIndexOf('/') + 1);
+                    next[name] = url;
+                }
+                thumbMap.value = next; // 这批先显示
+            }
+        };
+
+        watch(currentDir, (dir) => { loadThumbnails(dir); });
+
         const goToLevel = (index) => {
             pathStack.value = pathStack.value.slice(0, index + 1);
             currentDir.value = pathStack.value[pathStack.value.length - 1];
@@ -306,9 +389,15 @@ createApp({
         const viewerFileExt      = ref('');
         const viewerLoading      = ref(false);
 
+        // 主图：中图先显示，原图加载完替换
         const viewerCurrentImageUrl = ref('');
-        let _prevImageBlobUrl = '';
-        // 每次切图自增，丢弃过期的异步结果（快速翻页时旧请求晚返回不会覆盖当前页）
+        const viewerImageReady  = ref(false); // 主图（中图或原图）是否已加载
+        // url -> blobUrl 缓存（key 含 ?size= 区分中图/原图），viewer 关闭时统一释放
+        const _imageBlobCache = new Map();
+        const _imageFetchingMap = new Map();
+        const PRELOAD_AHEAD = 3;
+        const PRELOAD_BEHIND = 1;
+        // 每次切图自增，用于丢弃过期的异步结果（快速翻页时）
         let _viewerSeq = 0;
 
         const fetchAuthUrl = async (url) => {
@@ -319,11 +408,38 @@ createApp({
             return URL.createObjectURL(await res.blob());
         };
 
+        // 获取某 url 的 blob URL，有缓存直接返回，否则 fetch 并缓存
+        const getImageBlobUrl = (url) => {
+            if (_imageBlobCache.has(url)) return Promise.resolve(_imageBlobCache.get(url));
+            if (_imageFetchingMap.has(url)) return _imageFetchingMap.get(url);
+            const p = fetchAuthUrl(url).then(blobUrl => {
+                _imageBlobCache.set(url, blobUrl);
+                _imageFetchingMap.delete(url);
+                return blobUrl;
+            });
+            _imageFetchingMap.set(url, p);
+            return p;
+        };
+
+        // 后台静默预加载周边的中图（原图太大不预拉，避免抢带宽）
+        const preloadImages = (list, centerIdx) => {
+            const start = Math.max(0, centerIdx - PRELOAD_BEHIND);
+            const end   = Math.min(list.length - 1, centerIdx + PRELOAD_AHEAD);
+            for (let i = start; i <= end; i++) {
+                getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).catch(() => {});
+            }
+        };
+
         const closeViewer = () => {
             viewer.value = { show: false, type: null };
             viewerVideoUrl.value = '';
-            if (_prevImageBlobUrl) { URL.revokeObjectURL(_prevImageBlobUrl); _prevImageBlobUrl = ''; }
             viewerCurrentImageUrl.value = '';
+            viewerImageReady.value = false;
+            for (const [, blobUrl] of _imageBlobCache) {
+                if (typeof blobUrl === 'string' && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+            }
+            _imageBlobCache.clear();
+            _imageFetchingMap.clear();
         };
         const viewerPrev = () => { if (viewerImageIndex.value > 0) viewerImageIndex.value--; };
         const viewerNext = () => { if (viewerImageIndex.value < viewerImageList.value.length - 1) viewerImageIndex.value++; };
@@ -331,17 +447,27 @@ createApp({
         watch([viewerImageList, viewerImageIndex], async ([list, idx]) => {
             if (!list.length) { viewerCurrentImageUrl.value = ''; return; }
             const seq = ++_viewerSeq;
-            // 先清空：翻页瞬间不残留上一张图，宁可短暂空白
+            const name = list[idx].name;
+            const midUrl  = `${getThumbUrl(name)}?size=mid`;
+            const fullUrl = getFileUrl(name);
+
+            // 重置：清空主图，显示加载图标
+            viewerImageReady.value = false;
             viewerCurrentImageUrl.value = '';
-            if (_prevImageBlobUrl) { URL.revokeObjectURL(_prevImageBlobUrl); _prevImageBlobUrl = ''; }
-            const url = await fetchAuthUrl(getFileUrl(list[idx].name));
-            if (seq !== _viewerSeq) {
-                // 已经翻到别的页，丢弃本次结果
-                if (url.startsWith('blob:')) URL.revokeObjectURL(url);
-                return;
-            }
-            if (url.startsWith('blob:')) _prevImageBlobUrl = url;
-            viewerCurrentImageUrl.value = url;
+
+            // 中图：先显示
+            try {
+                const midBlob = await getImageBlobUrl(midUrl);
+                if (seq === _viewerSeq) viewerCurrentImageUrl.value = midBlob;
+            } catch (_) {}
+
+            // 原图：后台拉完替换中图
+            getImageBlobUrl(fullUrl).then(fullBlob => {
+                if (seq === _viewerSeq) viewerCurrentImageUrl.value = fullBlob;
+            }).catch(() => {});
+
+            // 预加载周边中图
+            preloadImages(list, idx);
         });
 
         const pickerDirs = computed(() => {
@@ -753,9 +879,11 @@ createApp({
             viewer, viewerImageList, viewerImageIndex, viewerVideoUrl,
             viewerTextContent, viewerTextTooLarge, viewerFileName, viewerFileSize,
             viewerFileExt, viewerLoading, viewerCurrentImageUrl,
+            viewerImageReady,
             closeViewer, viewerPrev, viewerNext,
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
+            thumbMap, isImageFile,
             // 文件操作
             opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
             opsTarget, pickerStack, renameName, copyName, pickerDirs,

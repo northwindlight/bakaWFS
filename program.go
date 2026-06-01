@@ -7,6 +7,7 @@ import (
 	"bakaWFS/internal/fileutil"
 	"bakaWFS/internal/handler"
 	"bakaWFS/internal/task"
+	"bakaWFS/internal/thumb"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -238,8 +239,14 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 	downloader := task.NewDownloader(cfg.DownloadWorkers, logger, queue)
 	downloader.Start()
 
+	thumbCacheDir := filepath.Join(".", ".thumbcache")
+	thumbGen, err := thumb.New(thumbCacheDir)
+	if err != nil {
+		return fmt.Errorf("初始化缩略图缓存失败: %w", err)
+	}
+
 	ah := handler.NewAuthHandler(authSvc, logger, cfg.AuthMode)
-	fh := handler.NewFileHandler(cfg, logger, downloader, queue)
+	fh := handler.NewFileHandler(cfg, logger, downloader, queue, thumbGen)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
 
@@ -248,10 +255,14 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 	if cfg.AuthMode {
 		mux.HandleFunc("/list", authMW(fh.HandleNode))
 		mux.HandleFunc("/files/", authMW(handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath))))))
+		mux.HandleFunc("/thumb/", authMW(fh.HandleThumb))
+		mux.HandleFunc("/thumbs", authMW(fh.HandleThumbBatch))
 		logger.Info("鉴权模式已启用，所有接口需登录")
 	} else {
 		mux.HandleFunc("/list", fh.HandleNode)
 		mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
+		mux.HandleFunc("/thumb/", fh.HandleThumb)
+		mux.HandleFunc("/thumbs", fh.HandleThumbBatch)
 	}
 	mux.HandleFunc("/login", ah.HandleLogin)
 	mux.HandleFunc("/upload", authMW(fh.HandleUpload))
