@@ -426,7 +426,9 @@ createApp({
             const start = Math.max(0, centerIdx - PRELOAD_BEHIND);
             const end   = Math.min(list.length - 1, centerIdx + PRELOAD_AHEAD);
             for (let i = start; i <= end; i++) {
+                // 先抢中图（秒显），再后台拉原图
                 getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).catch(() => {});
+                getImageBlobUrl(getFileUrl(list[i].name)).catch(() => {});
             }
         };
 
