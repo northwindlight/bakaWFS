@@ -514,10 +514,6 @@
                     style="max-height:90vh;max-width:90vw;"
                     :style="{ opacity: viewerImageReady ? 1 : 0, transition: 'opacity 0.4s ease' }"
                     draggable="false">
-                <!-- 加载中：中图还没到时显示一个旋转图标 -->
-                <div v-if="!viewerImageReady" class="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div class="text-4xl animate-bounce">🧊</div>
-                </div>
                 <!-- 翻页按钮（‹ › 字形基线偏下，用内层 span + 负 margin 视觉居中）-->
                 <button v-if="viewerImageIndex > 0" @click="viewerPrev"
                 class="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">
