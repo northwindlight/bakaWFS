@@ -1,10 +1,16 @@
-# baka-web-file-server
+# baka-web-file-server · 漫画版（manga）
 
-一个轻量、无状态的自托管文件服务器。基于 HTTPS + JWT 鉴权，提供 RPC 风格的 API，支持文件上传、远程 URL 下载和进度追踪。附带开箱即用的 Web 界面，部署简单。
+> **⚠️ 本分支会改写原始图片文件。** 漫画版为了缩略图缓存,会把内容哈希写入图片自身的元数据（PNG `tEXt` chunk / JPEG `APP9` 段）。改写是原子的、不改变图像像素,但文件字节和修改时间会变,且不可逆。**不接受请用 [`main`](../../tree/main)。**
 
-类似 filebrowser，但完全独立实现。后端由我完成，前端约 40% 由 AI 生成。
+---
 
-配置中开启 `cors_enabled: true` 即可启用 CORS 跨域支持，方便自行编写前端或 CLI 工具。
+一个轻量、无状态的自托管文件服务器。基于 HTTPS + JWT,提供 RPC 风格的 API,支持文件上传、远程 URL 下载和进度追踪。附带开箱即用的 Web 界面,部署简单。
+
+类似 filebrowser,但完全独立实现。后端由我完成,前端约 40% 由 AI 生成。
+
+漫画版在主线全部能力之上,叠加了针对漫画浏览的缩略图与渐进式加载。
+
+主线（通用文件服务器,**不碰原图**）见 [`main`](../../tree/main) 分支。
 
 ## 功能
 
@@ -14,9 +20,31 @@
 - 分片上传 + xxhash 完整性校验
 - JWT 登录鉴权 + Token 自动续签
 - 并发远程下载任务管理（支持取消和进度追踪）
-- 内置 Web UI（编译时嵌入二进制，也支持外部目录）
-- 鉴权模式：开启后所有接口（含浏览/下载）强制登录，前端打开即显示登录界面
+- 内置 Web UI（编译时嵌入二进制,也支持外部目录）
+- 鉴权模式：开启后所有接口（含浏览/下载）强制登录,前端打开即显示登录界面
 - 跨平台服务封装：一条命令注册为系统服务并自启动（Linux systemd / Windows SCM / macOS launchd）
+- **列表缩略图** — `POST /thumbs` 批量拉取目录所有图片的 96px 缩略图,二进制流,列表直接显示预览
+- **渐进加载** — 阅读器先显示 600px 中图,后台拉原图无缝替换;预加载相邻页
+- **内容寻址缓存** — 缩略图以图像数据 xxhash64 为 key,文件移动/改名后缓存不失效
+
+## 为什么要把哈希写进原图
+
+缓存 key 必须用**图像内容**的哈希（不是路径、不是修改时间）,否则文件一移动/整理/重命名,所有缩略图缓存全部作废,几千张大图重新生成。
+
+但每次访问都读全文件算哈希太慢（20MB PNG 冷读 200ms+）,缓存命中也快不起来。把算好的哈希**写回原图元数据**：
+
+- 首次：读全图算哈希 → 写入元数据 → 生成缩略图
+- 之后：只读文件头（几 KB）取出哈希,不重算,零全文件 I/O
+- 哈希只覆盖图像像素流（PNG `IDAT` / JPEG `SOS` 后扫描数据）,跳过元数据区,所以嵌入后重算结果不变、可校验
+- 文件移动/改名/重新封装后,只要图像数据没变,缓存照常命中
+
+用一次性的"改写元数据"换此后永久免重算。漫画收藏这种"写一次、读很多、常整理"的场景,**路径/mtime 方案做不到**——一移动全废。旁路索引方案（`.hash` 文件、独立数据库）多出来几千个小文件,移目录要带着同步,不如把哈希长在文件自己身上干净。
+
+`cmd/pregenthumbs` 可一次性预生成全部缩略图并嵌入哈希（**会批量改写原图**）：
+
+```bash
+go run ./cmd/pregenthumbs   # 在项目根目录运行
+```
 
 ## 预览
 
@@ -31,7 +59,7 @@
 ./bakaWFS
 ```
 
-首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`，编辑后重新启动即可。
+首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`,编辑后重新启动即可。
 
 ### 注册为系统服务
 
@@ -43,7 +71,7 @@
 ./bakaWFS uninstall # 卸载服务
 ```
 
-服务工作目录固定为二进制所在目录，`config.yaml` 与二进制放在同一目录即可。Linux 上需要 root 权限执行 install/uninstall。
+服务工作目录固定为二进制所在目录,`config.yaml` 与二进制放在同一目录即可。Linux 上需要 root 权限执行 install/uninstall。
 
 ### 首次配置
 
@@ -60,7 +88,7 @@ cert_path: "certificate.crt"
 key_path:  "private.key"
 ```
 
-启用 TLS 前请准备好证书。未启用 TLS 时，**不要将服务暴露在公网**。
+启用 TLS 前请准备好证书。未启用 TLS 时,**不要将服务暴露在公网**。
 
 ## 配置说明
 
@@ -78,7 +106,7 @@ html_dir:   "built-in"   # "built-in"=内置前端 / 外部目录路径 / 留空
 temp_dir:   ".uploads"   # 临时目录（分片上传、远程下载暂存）
 users_file: "users.yaml"
 download_workers: 2       # 并发远程下载 worker 数
-audit_log: ""             # 审计日志路径，留空关闭
+audit_log: ""             # 审计日志路径,留空关闭
 cors_enabled: false       # 是否启用 CORS 跨域支持
 auth_mode: false          # 鉴权模式：true = 所有接口需登录；false = 开放模式（仅写操作需登录）
 ```
@@ -96,10 +124,12 @@ users:
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
 | GET  | `/api/config` | 获取服务器配置（如 auth_mode） | 否 |
-| POST | `/login` | 登录，返回 JWT | 否 |
+| POST | `/login` | 登录,返回 JWT | 否 |
 | POST | `/verify` | 验证并续签 Token | 是 |
 | GET  | `/list` | 获取文件目录树 | auth_mode 时需要 |
-| GET  | `/files/*` | 下载文件（支持 Range，强制 Content-Disposition: attachment） | auth_mode 时需要 |
+| GET  | `/files/*` | 下载文件（支持 Range,强制 Content-Disposition: attachment） | auth_mode 时需要 |
+| GET  | `/thumb/<path>?size=` | 单图缩略图（list=96px / mid=600px） | 同 `/files` |
+| POST | `/thumbs` | 批量缩略图,二进制流,body `{"paths":[...]}` | 同 `/files` |
 | POST | `/upload` | 上传文件（整体上传） | 是 |
 | POST | `/upload/chunk` | 上传单个分片 | 是 |
 | POST | `/upload/merge` | 合并分片 | 是 |
@@ -111,7 +141,7 @@ users:
 | POST | `/copy` | 复制文件或目录 | 是 |
 | POST | `/mkdir` | 新建文件夹 | 是 |
 
-鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。
+鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。`/thumbs` 返回自描述二进制流：`[uint32 数量]{[uint16 路径长][路径][uint32 图长][JPEG]}`。
 
 详细 API 文档见 [bakaWFS API](bakaWFS_API.md)。
 
@@ -125,15 +155,20 @@ users:
 ├── linux-terminal.go    # Linux/macOS 终端输出
 ├── config.yaml
 ├── users.yaml
+├── cmd/
+│   └── pregenthumbs/    # 批量预生成缩略图并嵌入哈希
 ├── internal/
 │   ├── auth/            # JWT 逻辑
 │   ├── config/          # 配置加载与校验
-│   ├── fileutil/        # 文件工具函数（含 xxhash 校验、目录树 DTO）
+│   ├── fileops/         # 串行化文件变更队列 + 审计日志
+│   ├── fileutil/        # 文件工具函数（含 xxhash 校验、目录树）
 │   ├── handler/         # HTTP handler 与中间件
-│   └── task/            # 远程下载任务管理
+│   ├── task/            # 远程下载任务管理
+│   └── thumb/           # 缩略图生成 + 哈希元数据读写
 ├── files/               # 文件存储目录
 ├── html/                # 前端静态文件（编译时嵌入二进制）
-└── .uploads/            # 临时目录，启动时自动清理
+├── .uploads/            # 临时目录,启动时自动清理
+└── .thumbcache/         # 缩略图缓存目录
 ```
 
 ## 依赖
@@ -141,9 +176,10 @@ users:
 | 依赖 | 说明 |
 |------|------|
 | [golang-jwt](https://github.com/golang-jwt/jwt) | JWT 认证 |
-| [xxhash](https://github.com/cespare/xxhash) | 分片上传的客户端（Wasm）+ 服务端双重文件完整性校验 |
+| [xxhash](https://github.com/cespare/xxhash) | 分片上传 + 缩略图缓存 key（客户端 Wasm + 服务端双重校验） |
 | [go-colorable](https://github.com/mattn/go-colorable) | 旧版 Windows CMD 终端色彩回退适配 |
 | [kardianos/service](https://github.com/kardianos/service) | 跨平台系统服务封装（systemd / SCM / launchd） |
+| [x/image](https://golang.org/x/image) | 缩略图缩放与 WebP 解码 |
 
 ## License
 
