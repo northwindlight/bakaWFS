@@ -2,3 +2,9 @@ bakaWFS
 bakaWFS.exe
 certificate.crt
 private.key
+
+# 运行时产物
+.uploads/
+
+# 文件存储目录（含软链到实际数据）
+files/

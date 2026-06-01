@@ -169,6 +169,88 @@ func TestScanDir(t *testing.T) {
 	}
 }
 
+// ScanDir 应跟随软链目录（os.Stat 语义），把它当普通目录遍历。
+func TestScanDirFollowsSymlinkDir(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	os.MkdirAll(real, 0755)
+	os.WriteFile(filepath.Join(real, "x.txt"), []byte("x"), 0644)
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	node, err := fileutil.ScanDir(link)
+	if err != nil {
+		t.Fatalf("ScanDir on symlink: %v", err)
+	}
+	if node.Type != "dir" || len(node.Children) != 1 {
+		t.Errorf("expected symlinked dir with 1 child, got type=%s children=%d", node.Type, len(node.Children))
+	}
+}
+
+// 软链环（子目录软链指回祖先）不应导致无限递归/爆栈。
+func TestScanDirSymlinkCycle(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a")
+	b := filepath.Join(a, "b")
+	os.MkdirAll(b, 0755)
+	os.WriteFile(filepath.Join(a, "file.txt"), []byte("hi"), 0644)
+	// a/b/loop -> a  形成环
+	if err := os.Symlink(a, filepath.Join(b, "loop")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	done := make(chan struct{})
+	var node *fileutil.Node
+	var err error
+	go func() {
+		node, err = fileutil.ScanDir(a)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ScanDir did not terminate on symlink cycle (likely infinite recursion)")
+	}
+	if err != nil {
+		t.Fatalf("ScanDir: %v", err)
+	}
+	if node.Type != "dir" {
+		t.Errorf("expected dir node, got %s", node.Type)
+	}
+}
+
+// 同级两个软链指向同一真实目录（非环）应都被正常遍历，不被误判为环跳过。
+func TestScanDirDuplicateSymlinkNotCycle(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	os.MkdirAll(real, 0755)
+	os.WriteFile(filepath.Join(real, "x.txt"), []byte("x"), 0644)
+	if err := os.Symlink(real, filepath.Join(dir, "l1")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	os.Symlink(real, filepath.Join(dir, "l2"))
+
+	node, err := fileutil.ScanDir(dir)
+	if err != nil {
+		t.Fatalf("ScanDir: %v", err)
+	}
+	// real, l1, l2 三个目录节点，各含 1 个子文件
+	dirChildren := 0
+	for _, c := range node.Children {
+		if c.Type == "dir" {
+			dirChildren++
+			if len(c.Children) != 1 {
+				t.Errorf("symlinked/real dir %q should have 1 child, got %d", c.Name, len(c.Children))
+			}
+		}
+	}
+	if dirChildren != 3 {
+		t.Errorf("expected 3 dir entries (real, l1, l2), got %d", dirChildren)
+	}
+}
+
 func TestScanDirFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "single.txt")

@@ -308,6 +308,8 @@ createApp({
 
         const viewerCurrentImageUrl = ref('');
         let _prevImageBlobUrl = '';
+        // 每次切图自增，丢弃过期的异步结果（快速翻页时旧请求晚返回不会覆盖当前页）
+        let _viewerSeq = 0;
 
         const fetchAuthUrl = async (url) => {
             const token = localStorage.getItem('baka_token');
@@ -328,8 +330,16 @@ createApp({
 
         watch([viewerImageList, viewerImageIndex], async ([list, idx]) => {
             if (!list.length) { viewerCurrentImageUrl.value = ''; return; }
+            const seq = ++_viewerSeq;
+            // 先清空：翻页瞬间不残留上一张图，宁可短暂空白
+            viewerCurrentImageUrl.value = '';
             if (_prevImageBlobUrl) { URL.revokeObjectURL(_prevImageBlobUrl); _prevImageBlobUrl = ''; }
             const url = await fetchAuthUrl(getFileUrl(list[idx].name));
+            if (seq !== _viewerSeq) {
+                // 已经翻到别的页，丢弃本次结果
+                if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+                return;
+            }
             if (url.startsWith('blob:')) _prevImageBlobUrl = url;
             viewerCurrentImageUrl.value = url;
         });

@@ -491,16 +491,18 @@
                 <div class="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs bg-black/30 px-3 py-1 rounded-full max-w-[80vw] truncate">
                 {{ viewerImageList[viewerImageIndex]?.name }}
                 </div>
-                <!-- 图片 -->
-                <img :src="viewerCurrentImageUrl" :key="viewerCurrentImageUrl"
+                <!-- 图片：key 按当前页文件名，翻页强制重建，不残留上一张 -->
+                <img v-if="viewerCurrentImageUrl" :src="viewerCurrentImageUrl" :key="viewerImageList[viewerImageIndex]?.name"
                     class="max-h-screen max-w-screen object-contain select-none"
                     style="max-height:90vh;max-width:90vw;"
                     draggable="false">
-                <!-- 翻页按钮 -->
+                <!-- 翻页按钮（‹ › 字形基线偏下，用内层 span + 负 margin 视觉居中）-->
                 <button v-if="viewerImageIndex > 0" @click="viewerPrev"
-                class="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">‹</button>
+                class="absolute left-2 md:left-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">
+                    <span class="block" style="margin-top:-0.12em;margin-right:0.08em;">‹</span></button>
                 <button v-if="viewerImageIndex < viewerImageList.length - 1" @click="viewerNext"
-                class="absolute right-2 md:right-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">›</button>
+                class="absolute right-2 md:right-6 top-1/2 -translate-y-1/2 z-10 text-white/70 hover:text-white text-5xl leading-none transition bg-black/20 rounded-full w-12 h-12 flex items-center justify-center">
+                    <span class="block" style="margin-top:-0.12em;margin-left:0.08em;">›</span></button>
             </div>
             </template>
 
