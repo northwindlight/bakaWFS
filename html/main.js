@@ -391,7 +391,6 @@ createApp({
 
         // 主图：中图先显示，原图加载完替换
         const viewerCurrentImageUrl = ref('');
-        const viewerImageReady  = ref(false); // 主图（中图或原图）是否已加载
         // url -> blobUrl 缓存（key 含 ?size= 区分中图/原图），viewer 关闭时统一释放
         const _imageBlobCache = new Map();
         const _imageFetchingMap = new Map();
@@ -421,22 +420,32 @@ createApp({
             return p;
         };
 
-        // 后台静默预加载周边的中图（原图太大不预拉，避免抢带宽）
+        // 后台静默预加载周边中图+原图，并提前让浏览器解码中图（Image() onload）
         const preloadImages = (list, centerIdx) => {
             const start = Math.max(0, centerIdx - PRELOAD_BEHIND);
             const end   = Math.min(list.length - 1, centerIdx + PRELOAD_AHEAD);
             for (let i = start; i <= end; i++) {
-                // 先抢中图（秒显），再后台拉原图
-                getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).catch(() => {});
+                getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).then(blobUrl => {
+                    const img = new Image(); img.src = blobUrl; // 触发浏览器解码
+                }).catch(() => {});
                 getImageBlobUrl(getFileUrl(list[i].name)).catch(() => {});
             }
+        };
+
+        // 等待浏览器解码完这张图，再设置 src 就零延迟渲染
+        const decodeThenSet = (blobUrl) => {
+            return new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => resolve();
+                img.onerror = () => resolve(); // 解码失败也别卡死
+                img.src = blobUrl;
+            });
         };
 
         const closeViewer = () => {
             viewer.value = { show: false, type: null };
             viewerVideoUrl.value = '';
             viewerCurrentImageUrl.value = '';
-            viewerImageReady.value = false;
             for (const [, blobUrl] of _imageBlobCache) {
                 if (typeof blobUrl === 'string' && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
             }
@@ -453,18 +462,18 @@ createApp({
             const midUrl  = `${getThumbUrl(name)}?size=mid`;
             const fullUrl = getFileUrl(name);
 
-            // 重置：清空主图，显示加载图标
-            viewerImageReady.value = false;
-            viewerCurrentImageUrl.value = '';
-
-            // 中图：先显示
+            // 中图先显示——等浏览器解码完再赋值，src 一设即出，无闪烁
             try {
                 const midBlob = await getImageBlobUrl(midUrl);
+                if (seq !== _viewerSeq) return;
+                await decodeThenSet(midBlob);
                 if (seq === _viewerSeq) viewerCurrentImageUrl.value = midBlob;
             } catch (_) {}
 
-            // 原图：后台拉完替换中图
-            getImageBlobUrl(fullUrl).then(fullBlob => {
+            // 原图：后台拉+预解码完替换中图
+            getImageBlobUrl(fullUrl).then(async fullBlob => {
+                if (seq !== _viewerSeq) return;
+                await decodeThenSet(fullBlob);
                 if (seq === _viewerSeq) viewerCurrentImageUrl.value = fullBlob;
             }).catch(() => {});
 
@@ -881,7 +890,6 @@ createApp({
             viewer, viewerImageList, viewerImageIndex, viewerVideoUrl,
             viewerTextContent, viewerTextTooLarge, viewerFileName, viewerFileSize,
             viewerFileExt, viewerLoading, viewerCurrentImageUrl,
-            viewerImageReady,
             closeViewer, viewerPrev, viewerNext,
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
