@@ -394,7 +394,7 @@ createApp({
         // url -> blobUrl 缓存（key 含 ?size= 区分中图/原图），viewer 关闭时统一释放
         const _imageBlobCache = new Map();
         const _imageFetchingMap = new Map();
-        const PRELOAD_AHEAD = 3;
+        const PRELOAD_AHEAD = 10;
         const PRELOAD_BEHIND = 1;
         // 每次切图自增，用于丢弃过期的异步结果（快速翻页时）
         let _viewerSeq = 0;
