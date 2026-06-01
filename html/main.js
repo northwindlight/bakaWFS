@@ -462,7 +462,9 @@ createApp({
             const midUrl  = `${getThumbUrl(name)}?size=mid`;
             const fullUrl = getFileUrl(name);
 
-            // 中图先显示——等浏览器解码完再赋值，src 一设即出，无闪烁
+            // 立即清空旧帧，避免旧 key 的 img 残留
+            viewerCurrentImageUrl.value = '';
+            // 中图先显示——等解码完再赋值，一设即出
             try {
                 const midBlob = await getImageBlobUrl(midUrl);
                 if (seq !== _viewerSeq) return;
