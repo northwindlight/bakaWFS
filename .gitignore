@@ -3,6 +3,10 @@ bakaWFS.exe
 certificate.crt
 private.key
 
+# 运行时配置（首次启动自动生成，含 secret / 账号密码，不入库）
+config.yaml
+users.yaml
+
 # 运行时产物
 .uploads/
 
