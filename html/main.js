@@ -1,4 +1,4 @@
-const { createApp, ref, computed, watch, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, watch, onMounted, onUnmounted, nextTick } = Vue;
 
 // 导入拆分的模块
 import { i18n } from './i18n.js';
@@ -17,6 +17,7 @@ createApp({
         const currentDir = ref(null);
         const pathStack = ref([]);
         const loading = ref(false);
+        const currentSeries = ref(null);   // 连载话列表视图（非 null 时显示话列表而非海报网格）
         const showLogin = ref(false);
         const showRemoteModal = ref(false);
         const showProgressModal = ref(false);
@@ -275,11 +276,208 @@ createApp({
         // ── 目录与文件排序 ───────────────────────
         const sortedFiles = computed(() => {
             if (!currentDir.value || !currentDir.value.children) return [];
-            return [...currentDir.value.children].sort((a, b) => {
-                if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-                return naturalCompare(a.name, b.name);
-            });
+            return [...currentDir.value.children]
+                .filter(c => !c.name.startsWith('.'))   // 隐藏文件（.crawled.json 等爬虫元数据）不显示
+                .sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+                    return naturalCompare(a.name, b.name);
+                });
         });
+
+        // ── 漫画本识别（纯前端，从 Node 树推导，后端无感）───────────
+        // 一个 dir 若 children 全是图片（忽略 article.md/.json/.log 等），视为「一本漫画」。
+        const SKIP_META = /\.(md|json|log|txt)$/i;
+        const isMangaBook = (node) => {
+            if (!node || node.type !== 'dir' || !node.children || !node.children.length) return false;
+            const files = node.children.filter(c => c.type === 'file' && !SKIP_META.test(c.name));
+            if (!files.length) return false;
+            // 全部非 meta 文件都是图片，且没有子目录
+            return node.children.every(c =>
+                c.type === 'file' && (SKIP_META.test(c.name) || isImageFile(c.name))
+            ) && files.some(c => isImageFile(c.name));
+        };
+
+        // ── 连载聚合 ───────────────────────
+        // 把同一作品的多话/多卷聚合成一部作品。识别两类连载后缀：
+        //   ① 第N话/第N章/第N回
+        //   ② （上/中/下）（前篇/后篇）（上篇/下篇）（前编/后编）—— 全角或半角括号
+        const SERIES_RE = /(\s*第\s*\d+\s*[话話章回]\s*|\s*[（(]\s*(?:上|中|下|前篇|后篇|後篇|上篇|下篇|前编|后编|前編|後編)\s*[）)]\s*)$/;
+        const seriesKey = (name) => name.replace(SERIES_RE, '').trim();
+        const isSeriesChapter = (name) => SERIES_RE.test(name);
+        // 取连载序号用于话内排序：第N话按数字；上中下/前后按固定次序
+        const VOLUME_ORDER = { '上': 1, '前篇': 1, '前编': 1, '前編': 1, '上篇': 1,
+                               '中': 2,
+                               '下': 3, '后篇': 3, '後篇': 3, '后编': 3, '後編': 3, '下篇': 3 };
+        const chapterNo = (name) => {
+            const mNum = name.match(/第\s*(\d+)\s*[话話章回]/);
+            if (mNum) return parseInt(mNum[1], 10);
+            const mVol = name.match(/[（(]\s*(上|中|下|前篇|后篇|後篇|上篇|下篇|前编|后编|前編|後編)\s*[）)]\s*$/);
+            if (mVol) return VOLUME_ORDER[mVol[1]] || 0;
+            return 0;
+        };
+
+        // 把当前目录的漫画本聚合：连载多话合成一个「作品」，单本原样。
+        // 非漫画的子目录也保留（type:'dir'），以免漏掉非漫画目录。
+        // 返回 [{ name, type:'series'|'book'|'dir', node?, chapters?, coverNode?, coverNode? }]
+        const aggregatedBooks = computed(() => {
+            const items = sortedFiles.value.filter(n => isMangaBook(n));
+            const seriesMap = new Map();
+            const out = [];
+            for (const n of items) {
+                if (isSeriesChapter(n.name)) {
+                    const key = seriesKey(n.name);
+                    if (!seriesMap.has(key)) {
+                        const entry = { name: key, type: 'series', chapters: [] };
+                        seriesMap.set(key, entry);
+                        out.push(entry);
+                    }
+                    seriesMap.get(key).chapters.push(n);
+                } else {
+                    out.push({ name: n.name, type: 'book', node: n });
+                }
+            }
+            for (const e of out) {
+                if (e.type === 'series') {
+                    e.chapters.sort((a, b) => chapterNo(a.name) - chapterNo(b.name));
+                    e.coverNode = e.chapters[0];
+                }
+            }
+            // 补入非漫画子目录
+            for (const n of sortedFiles.value) {
+                if (n.type === 'dir' && !isMangaBook(n)) {
+                    out.push({ name: n.name, type: 'dir', node: n });
+                }
+            }
+            return out;
+        });
+
+        // 取一本漫画的封面（排序后第一张图，通常 1.jpg）
+        const bookCover = (node) => {
+            if (!node || !node.children) return null;
+            const imgs = node.children
+                .filter(c => c.type === 'file' && isImageFile(c.name))
+                .sort((a, b) => naturalCompare(a.name, b.name));
+            return imgs.length ? imgs[0].name : null;
+        };
+
+        // 一本漫画的页数（图片数）
+        const bookPageCount = (node) => {
+            if (!node || !node.children) return 0;
+            return node.children.filter(c => c.type === 'file' && isImageFile(c.name)).length;
+        };
+
+        // ── article.md 元数据解析 ───────────────────────
+        // 目录名信息量低，article.md 里有真标题/原标题/来源/页数。
+        // bookMeta: 漫画本名 -> { title, titleJpn, source, group, pages }，异步填充。
+        const bookMeta = ref({});
+        const _metaFetching = new Set();
+
+        const parseArticleMd = (text) => {
+            const meta = {};
+            const lines = text.split('\n');
+            for (const line of lines) {
+                const t = line.trim();
+                if (t.startsWith('# ') && !meta.title) {
+                    meta.title = t.slice(2).trim();
+                } else if (t.startsWith('> ')) {
+                    const body = t.slice(2).trim();
+                    if (body.startsWith('标题：') || body.startsWith('标题:')) {
+                        // DeepSeek 清理后的真标题，优先级最高，覆盖 # 行的原始大杂烩
+                        meta.cleanTitle = body.replace(/^标题[：:]/, '').trim();
+                    } else if (body.startsWith('作者：') || body.startsWith('作者:')) {
+                        meta.author = body.replace(/^作者[：:]/, '').trim();
+                    } else if (body.startsWith('来源：') || body.startsWith('来源:')) {
+                        meta.source = body.replace(/^来源[：:]/, '').split('|')[0].trim();
+                    } else if (body.startsWith('汉化组：') || body.startsWith('汉化组:')) {
+                        meta.group = body.replace(/^汉化组[：:]/, '').trim();
+                    } else if (body.startsWith('原标题：') || body.startsWith('原标题:')) {
+                        meta.titleJpn = body.replace(/^原标题[：:]/, '').trim();
+                    } else if (body.startsWith('页数：') || body.startsWith('页数:')) {
+                        meta.pages = parseInt(body.replace(/^页数[：:]/, '').trim(), 10) || 0;
+                    }
+                }
+            }
+            // 真标题优先：DeepSeek 清理版 > # 行原始标题
+            if (meta.cleanTitle) meta.title = meta.cleanTitle;
+            return meta;
+        };
+
+        // 给一本漫画拉 article.md（若有）并缓存元数据。relPath = 该书相对根的路径。
+        const fetchBookMeta = async (relPath, bookName, node) => {
+            if (_metaFetching.has(relPath) || bookMeta.value[bookName]) return;
+            const hasArticle = (node.children || []).some(c => c.type === 'file' && c.name.toLowerCase() === 'article.md');
+            if (!hasArticle) return;
+            _metaFetching.add(relPath);
+            try {
+                const token = localStorage.getItem('baka_token');
+                const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                const url = `${API_BASE}/files/${relPath.split('/').map(encodeURIComponent).join('/')}/article.md`;
+                const res = await fetch(url, opts);
+                if (res.ok) {
+                    bookMeta.value = { ...bookMeta.value, [bookName]: parseArticleMd(await res.text()) };
+                }
+            } catch (_) { /* 静默：拿不到就回退目录名 */ }
+            finally { _metaFetching.delete(relPath); }
+        };
+
+        // 显示标题：优先 article.md 的标题，回退目录名
+        const bookTitle = (node) => {
+            const m = bookMeta.value[node.name];
+            return (m && m.title) ? m.title : node.name;
+        };
+
+        // 当前目录下：哪些子项是漫画本、哪些是普通目录/文件
+        const currentIsBookGrid = computed(() =>
+            sortedFiles.value.some(n => isMangaBook(n))
+        );
+
+        // 分组网格（汉化组层）：靠爬虫标记文件判定，而非脆弱地推导子目录内容。
+        // 不同来源爬虫写不同名的标记（.crawled.json / .nono_crawl.log / .sanada_recrawl.log …），
+        // 统一匹配「.<隐藏> 且含 crawl」的文件 → 当前是漫画库根 = 渲染汉化组大卡片。
+        const CRAWL_MARK = /^\..*crawl/i;
+        const currentIsGroupGrid = computed(() => {
+            const ch = currentDir.value?.children || [];
+            return ch.some(c => c.type === 'file' && CRAWL_MARK.test(c.name));
+        });
+
+        // 取一个汉化组/分组目录的封面墙（聚合后前 4 部作品，连载取第1话封面）。
+        // 返回 [{ name, coverNode }]，name 用于 coverMap key = "组名/作品名"
+        const groupBooks = (node) => {
+            if (!node || !node.children) return [];
+            // 本地版聚合（不依赖 computed，给 group card 用）
+            const items = node.children.filter(c => isMangaBook(c));
+            const seriesMap = new Map();
+            const works = [];
+            for (const n of items) {
+                if (isSeriesChapter(n.name)) {
+                    const key = seriesKey(n.name);
+                    if (!seriesMap.has(key)) {
+                        const entry = { name: key, coverNode: n };
+                        seriesMap.set(key, entry);
+                        works.push(entry);
+                    }
+                    // 找到第1话（话号最小）时替换 coverNode
+                    const cur = seriesMap.get(key);
+                    if (chapterNo(n.name) < chapterNo(cur.coverNode.name)) {
+                        cur.coverNode = n;
+                        cur.name = key;
+                    }
+                } else {
+                    works.push({ name: n.name, coverNode: n });
+                }
+            }
+            return works.slice(0, 4);
+        };
+        const groupBookCount = (node) => {
+            if (!node || !node.children) return 0;
+            const items = node.children.filter(c => isMangaBook(c));
+            // 聚合计数：去重连载 key
+            const keys = new Set();
+            for (const n of items) {
+                keys.add(isSeriesChapter(n.name) ? seriesKey(n.name) : n.name);
+            }
+            return keys.size;
+        };
 
         // ── 列表缩略图批量加载 ───────────────────────
         // 文件名 -> blob URL（LQIP）。进入目录时批量拉取，列表项据此显示预览。
@@ -356,7 +554,85 @@ createApp({
             }
         };
 
-        watch(currentDir, (dir) => { loadThumbnails(dir); });
+        // ── 漫画本封面 URL 生成 ───────────────────────
+        // 漫画本目录名(或"组名/本名") -> 封面中图的 URL。
+        // 用可缓存 URL 交给 <img>，浏览器原生 HTTP 缓存 + lazy 调度，不手动 fetch。
+        const coverMap = ref({});
+        const loadCovers = (dir) => {
+            coverMap.value = {};
+            if (!dir || !dir.children) return;
+
+            const prefix = pathStack.value.map(p => p.name).join('/');
+            const pathToKey = {};
+            const paths = [];
+
+            // 按界面显示顺序（自然排序）拉，封面才从上到下依次出现
+            const sortedChildren = [...dir.children].sort((a, b) => naturalCompare(a.name, b.name));
+
+            // 1) 当前目录下的漫画本：封面 key = 本名
+            for (const c of sortedChildren) {
+                if (!isMangaBook(c)) continue;
+                const cover = bookCover(c);
+                if (!cover) continue;
+                const p = (prefix ? `${prefix}/` : '') + `${c.name}/${cover}`;
+                pathToKey[p] = c.name;
+                paths.push(p);
+            }
+
+            // 2) 分组层：聚合连载后取前 4 部作品的封面（键= "组名/作品名"）
+            for (const g of sortedChildren) {
+                if (g.type !== 'dir') continue;
+                const items = (g.children || []).filter(c => isMangaBook(c));
+                // 聚合连载
+                const sMap = new Map();
+                const works = [];
+                for (const n of items) {
+                    if (isSeriesChapter(n.name)) {
+                        const k = seriesKey(n.name);
+                        if (!sMap.has(k)) { const e = { name: k, coverNode: n }; sMap.set(k, e); works.push(e); }
+                        const cur = sMap.get(k);
+                        if (chapterNo(n.name) < chapterNo(cur.coverNode.name)) cur.coverNode = n;
+                    } else {
+                        works.push({ name: n.name, coverNode: n });
+                    }
+                }
+                // 取前 4 部作品的封面
+                for (const w of works.slice(0, 4)) {
+                    const cover = bookCover(w.coverNode);
+                    if (!cover) continue;
+                    const p = (prefix ? `${prefix}/` : '') + `${g.name}/${w.coverNode.name}/${cover}`;
+                    pathToKey[p] = `${g.name}/${w.name}`;   // 键用聚合名
+                    paths.push(p);
+                }
+            }
+            if (!paths.length) return;
+
+            // 直接给 <img> 一个可缓存的 URL（带 token 走 query，鉴权模式也能用），
+            // 让浏览器原生 HTTP 缓存接管（后端已发 Cache-Control: max-age=86400）。
+            // 切目录/刷新/翻回来都命中磁盘缓存，不重新下载。
+            // 不再 fetch+createObjectURL —— blob URL 是临时的、绕过 HTTP 缓存。
+            const token = localStorage.getItem('baka_token');
+            const tokenQ = token ? `&token=${encodeURIComponent(token)}` : '';
+            const next = { ...coverMap.value };
+            for (const relPath of paths) {
+                const enc = relPath.split('/').map(encodeURIComponent).join('/');
+                next[pathToKey[relPath]] = `${API_BASE}/thumb/${enc}?size=mid${tokenQ}`;
+            }
+            coverMap.value = next;
+        };
+
+        // 批量拉当前目录下漫画本的 article.md 元数据（真标题）
+        const loadBookMetas = (dir) => {
+            if (!dir || !dir.children) return;
+            const prefix = pathStack.value.map(p => p.name).join('/');
+            for (const c of dir.children) {
+                if (!isMangaBook(c)) continue;
+                const rel = (prefix ? `${prefix}/` : '') + c.name;
+                fetchBookMeta(rel, c.name, c);
+            }
+        };
+
+        watch(currentDir, (dir) => { loadThumbnails(dir); loadCovers(dir); loadBookMetas(dir); });
 
         const goToLevel = (index) => {
             pathStack.value = pathStack.value.slice(0, index + 1);
@@ -368,8 +644,38 @@ createApp({
             currentDir.value = rootData.value;
         };
 
+        // ── 连载系列视图 ───────────────────────
+        const openSeries = (series) => { currentSeries.value = series; };
+        const closeSeries = () => { currentSeries.value = null; };
+        const openChapter = (chapterNode) => {
+            pathStack.value.push(chapterNode);
+            currentDir.value = chapterNode;
+            closeSeries();   // 回到目录树，进阅读器
+            const cover = bookCover(chapterNode);
+            if (cover) {
+                nextTick(() => {
+                    const first = sortedFiles.value.find(f => f.name === cover);
+                    if (first) openFileViewer(first);
+                });
+            }
+        };
+
         const handleItemClick = (item) => {
             if (item.type === 'dir') {
+                // 漫画本：进入目录后直接翻页阅读（看第一页）
+                if (isMangaBook(item)) {
+                    pathStack.value.push(item);
+                    currentDir.value = item;
+                    const cover = bookCover(item);
+                    if (cover) {
+                        // 等 sortedFiles 跟着 currentDir 更新后再开阅读器
+                        nextTick(() => {
+                            const first = sortedFiles.value.find(f => f.name === cover);
+                            if (first) openFileViewer(first);
+                        });
+                    }
+                    return;
+                }
                 pathStack.value.push(item);
                 currentDir.value = item;
             } else {
@@ -896,6 +1202,9 @@ createApp({
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
             thumbMap, isImageFile,
+            // 漫画版渲染
+            isMangaBook, bookCover, bookPageCount, coverMap, currentIsBookGrid,
+            currentIsGroupGrid, groupBooks, groupBookCount, bookMeta, bookTitle, aggregatedBooks, currentSeries, openSeries, closeSeries, openChapter,
             // 文件操作
             opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
             opsTarget, pickerStack, renameName, copyName, pickerDirs,

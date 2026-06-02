@@ -96,6 +96,128 @@
         .footer a { color: #94a3b8; text-decoration: none; }
         .footer a:hover { color: #38bdf8; }
         .footer .sep { margin: 0 0.5rem; }
+
+        /* ── 漫画海报封面网格 ───────────────────── */
+        .manga-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 1rem;
+            padding: 0.5rem;
+        }
+        @media (min-width: 768px) {
+            .manga-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1.25rem; }
+        }
+        .poster {
+            position: relative;
+            aspect-ratio: 3 / 4;
+            border-radius: 16px;
+            overflow: hidden;
+            cursor: pointer;
+            background: linear-gradient(135deg, #B3E5FC, #E1F5FE);
+            box-shadow: 0 4px 16px rgba(3, 169, 244, 0.18);
+            transition: transform .25s ease, box-shadow .25s ease;
+        }
+        .poster:hover {
+            transform: translateY(-6px) scale(1.02);
+            box-shadow: 0 12px 28px rgba(3, 169, 244, 0.35);
+        }
+        .poster-img {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transition: transform .4s ease;
+        }
+        .poster:hover .poster-img { transform: scale(1.06); }
+        /* 占位（封面还没加载/无封面）*/
+        .poster-placeholder {
+            position: absolute; inset: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 3rem; opacity: .35;
+        }
+        /* 底部毛玻璃条：标题 + 汉化组 */
+        .poster-glass {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            padding: 0.6rem 0.7rem 0.65rem;
+            background: rgba(255, 255, 255, 0.45);
+            backdrop-filter: blur(12px) saturate(1.4);
+            -webkit-backdrop-filter: blur(12px) saturate(1.4);
+            border-top: 1px solid rgba(255, 255, 255, 0.6);
+        }
+        .poster-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #0a3a52;
+            line-height: 1.25;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            text-shadow: 0 1px 2px rgba(255,255,255,0.5);
+        }
+        .poster-sub {
+            margin-top: 2px;
+            font-size: 0.62rem;
+            color: #0288D1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        /* 页数徽章（右上）*/
+        .poster-badge {
+            position: absolute; top: 8px; right: 8px;
+            background: rgba(2, 136, 209, 0.85);
+            color: #fff;
+            font-size: 0.6rem;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 999px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        }
+        /* 来源徽章（左上，e-hentai / B站）*/
+        .poster-source {
+            position: absolute; top: 8px; left: 8px;
+            background: rgba(255,255,255,0.8);
+            color: #0288D1;
+            font-size: 0.55rem;
+            font-weight: 700;
+            padding: 2px 7px;
+            border-radius: 999px;
+            backdrop-filter: blur(4px);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        /* 汉化组分组卡片（第1层）的封面墙拼图 */
+        .group-card {
+            position: relative;
+            aspect-ratio: 3 / 4;
+            border-radius: 18px;
+            overflow: hidden;
+            cursor: pointer;
+            box-shadow: 0 4px 16px rgba(3, 169, 244, 0.18);
+            transition: transform .25s ease, box-shadow .25s ease;
+        }
+        .group-card:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 12px 28px rgba(3,169,244,0.35); }
+        .group-wall {
+            position: absolute; inset: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 2px;
+            background: #B3E5FC;
+        }
+        .group-wall img { width: 100%; height: 100%; object-fit: cover; }
+        .group-wall .empty { background: linear-gradient(135deg,#B3E5FC,#E1F5FE); }
+        .group-glass {
+            position: absolute; left: 0; right: 0; bottom: 0;
+            padding: 0.7rem 0.8rem;
+            background: rgba(255,255,255,0.5);
+            backdrop-filter: blur(14px) saturate(1.4);
+            -webkit-backdrop-filter: blur(14px) saturate(1.4);
+            border-top: 1px solid rgba(255,255,255,0.6);
+        }
+        .group-name { font-size: 0.9rem; font-weight: 800; color: #0a3a52; line-height: 1.2;
+            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+        .group-count { margin-top: 2px; font-size: 0.65rem; color: #0288D1; }
     </style>
 </head>
 <body class="p-4 md:p-8">
@@ -407,6 +529,82 @@
                         <p class="mt-4">琪露诺正在数数...</p>
                     </div>
 
+                    <!-- ── 汉化组/连载分组网格（封面墙卡片）── -->
+                    <div v-else-if="currentIsGroupGrid" class="manga-grid">
+                        <div v-for="g in sortedFiles" :key="g.name" class="group-card" @click="handleItemClick(g)">
+                            <div class="group-wall">
+                                <template v-for="(b, i) in groupBooks(g)" :key="i">
+                                    <img v-if="coverMap[g.name + '/' + b.name]" :src="coverMap[g.name + '/' + b.name]" loading="lazy" draggable="false">
+                                    <div v-else class="empty"></div>
+                                </template>
+                                <!-- 不足4张补空格 -->
+                                <div v-for="n in (4 - groupBooks(g).length)" :key="'e'+n" class="empty"></div>
+                            </div>
+                            <div class="group-glass">
+                                <div class="group-name">{{ g.name }}</div>
+                                <div class="group-count">{{ groupBookCount(g) }} 本</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── 连载话列表视图 ── -->
+                    <div v-else-if="currentSeries" class="flex flex-col h-full">
+                        <div class="px-3 py-2 border-b border-sky-50 flex items-center gap-2 shrink-0">
+                            <button @click="closeSeries()" class="w-8 h-8 flex items-center justify-center rounded-lg bg-sky-100/50 text-sky-600 text-lg hover:bg-sky-200 transition">←</button>
+                            <span class="font-bold text-sky-800 truncate">{{ currentSeries.name }}</span>
+                            <span class="text-xs text-sky-400 ml-auto">{{ currentSeries.chapters.length }} 话</span>
+                        </div>
+                        <div class="manga-grid flex-1 overflow-y-auto p-2">
+                            <div v-for="ch in currentSeries.chapters" :key="ch.name" class="poster" @click="openChapter(ch)">
+                                <img v-if="coverMap[ch.name]" :src="coverMap[ch.name]" class="poster-img" loading="lazy" draggable="false">
+                                <div v-else class="poster-placeholder">📖</div>
+                                <div class="poster-badge">{{ bookPageCount(ch) }}P</div>
+                                <div class="poster-glass">
+                                    <div class="poster-title">{{ ch.name }}</div>
+                                    <div class="poster-sub">{{ bookPageCount(ch) }} 页</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ── 漫画海报网格模式（含漫画本时启用，聚合同作品多话/多卷）── -->
+                    <div v-else-if="currentIsBookGrid" class="manga-grid">
+                        <template v-for="item in aggregatedBooks" :key="item.name">
+                            <!-- 连载作品：聚合卡（多话/多卷合一张，封面取第1话首图）-->
+                            <div v-if="item.type === 'series'" class="poster" @click="openSeries(item)">
+                                <img v-if="coverMap[item.coverNode.name]" :src="coverMap[item.coverNode.name]" class="poster-img" loading="lazy" draggable="false">
+                                <div v-else class="poster-placeholder">📚</div>
+                                <div class="poster-badge">{{ item.chapters.length }}话</div>
+                                <div class="poster-glass">
+                                    <div class="poster-title">{{ item.name }}</div>
+                                    <div class="poster-sub">{{ item.chapters.length }} 话 · {{ item.chapters[0].name.match(/第\s*(\d+)\s*[话話章回]|[（(]\s*(上|下|中|前|后)[）)]/) ? ('第' + item.chapters.length + '话已完结') : '连载中' }}</div>
+                                </div>
+                            </div>
+                            <!-- 单行本：海报卡片（标题取 article.md，回退目录名）-->
+                            <div v-else-if="item.type === 'book'" class="poster" @click="handleItemClick(item.node)">
+                                <img v-if="coverMap[item.node.name]" :src="coverMap[item.node.name]" class="poster-img" loading="lazy" draggable="false">
+                                <div v-else class="poster-placeholder">📖</div>
+                                <div class="poster-badge">{{ bookPageCount(item.node) }}P</div>
+                                <div v-if="bookMeta[item.node.name] && bookMeta[item.node.name].source" class="poster-source">{{ bookMeta[item.node.name].source }}</div>
+                                <div class="poster-glass">
+                                    <div class="poster-title">{{ bookTitle(item.node) }}</div>
+                                    <div class="poster-sub" :title="bookMeta[item.node.name] && bookMeta[item.node.name].author">
+                                        {{ (bookMeta[item.node.name] && bookMeta[item.node.name].author) || '' }}
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 非漫画子目录：简易卡片，可点入 -->
+                            <div v-else-if="item.type === 'dir'" class="poster" @click="handleItemClick(item.node)">
+                                <div class="poster-placeholder">📁</div>
+                                <div class="poster-glass">
+                                    <div class="poster-title">{{ item.name }}</div>
+                                    <div class="poster-sub">{{ (item.node.children || []).length }} 项</div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+
+                    <!-- ── 普通文件列表模式 ── -->
                     <div v-else>
                         <div v-for="item in sortedFiles" :key="item.name"
                             @click="handleItemClick(item)"
