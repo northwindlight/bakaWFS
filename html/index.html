@@ -132,7 +132,7 @@
         .poster-placeholder {
             position: absolute; inset: 0;
             display: flex; align-items: center; justify-content: center;
-            font-size: 3rem; opacity: .35;
+            font-size: 3.5rem; opacity: .35;
         }
         /* 底部毛玻璃条：标题 + 汉化组 */
         .poster-glass {
@@ -144,8 +144,8 @@
             border-top: 1px solid rgba(255, 255, 255, 0.6);
         }
         .poster-title {
-            font-size: 0.78rem;
-            font-weight: 700;
+            font-size: 0.94rem;
+            font-weight: 600;
             color: #0a3a52;
             line-height: 1.25;
             display: -webkit-box;
@@ -156,10 +156,12 @@
         }
         .poster-sub {
             margin-top: 2px;
-            font-size: 0.62rem;
-            color: #0288D1;
+            font-size: 0.75rem;
+            color: #01579b;
+            font-weight: 400;
             white-space: nowrap;
             overflow: hidden;
+            text-overflow: ellipsis;
             text-overflow: ellipsis;
         }
         /* 页数徽章（右上）*/
@@ -167,8 +169,8 @@
             position: absolute; top: 8px; right: 8px;
             background: rgba(2, 136, 209, 0.85);
             color: #fff;
-            font-size: 0.6rem;
-            font-weight: 700;
+            font-size: 0.7rem;
+            font-weight: 500;
             padding: 2px 8px;
             border-radius: 999px;
             backdrop-filter: blur(4px);
@@ -179,8 +181,8 @@
             position: absolute; top: 8px; left: 8px;
             background: rgba(255,255,255,0.8);
             color: #0288D1;
-            font-size: 0.55rem;
-            font-weight: 700;
+            font-size: 0.65rem;
+            font-weight: 400;
             padding: 2px 7px;
             border-radius: 999px;
             backdrop-filter: blur(4px);
@@ -577,7 +579,7 @@
                                 <div class="poster-badge">{{ item.chapters.length }}话</div>
                                 <div class="poster-glass">
                                     <div class="poster-title">{{ item.name }}</div>
-                                    <div class="poster-sub">{{ item.chapters.length }} 话 · {{ item.chapters[0].name.match(/第\s*(\d+)\s*[话話章回]|[（(]\s*(上|下|中|前|后)[）)]/) ? ('第' + item.chapters.length + '话已完结') : '连载中' }}</div>
+                                    <div class="poster-sub">{{ (bookMeta[item.coverNode.name] && bookMeta[item.coverNode.name].author) || '' }}</div>
                                 </div>
                             </div>
                             <!-- 单行本：海报卡片（标题取 article.md，回退目录名）-->
