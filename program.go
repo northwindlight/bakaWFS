@@ -54,6 +54,17 @@ type program struct {
 	stopCh chan struct{}
 }
 
+// chdirToExeDir 将工作目录切到可执行文件所在目录。
+// 服务模式下 SCM 给的 CWD 是 System32，所有相对路径（config.yaml、files/、
+// .uploads、.thumbcache 等）都会错位，必须在启动前纠正。
+func chdirToExeDir() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	_ = os.Chdir(filepath.Dir(exe))
+}
+
 func (p *program) Start(s service.Service) error {
 	p.stopCh = make(chan struct{})
 	go p.run()
@@ -66,6 +77,9 @@ func (p *program) Stop(s service.Service) error {
 }
 
 func (p *program) run() {
+	// Windows 服务由 SCM 拉起时 CWD 是 System32，kardianos 的 WorkingDirectory
+	// 在 Windows 上不可靠。强制切到可执行文件所在目录，确保所有相对路径正确。
+	chdirToExeDir()
 	output := setupOutput()
 	logger := slog.New(tint.NewHandler(output, &tint.Options{
 		TimeFormat: "15:04:05",
