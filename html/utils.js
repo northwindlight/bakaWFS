@@ -21,7 +21,41 @@ export const formatSize = (bytes) => {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
+// 首字符类别：0=数字、1=标点、2=中文、3=英文/其它。
+// 用于分组排序：数字 → 标点（半角+全角）→ 中文 → 英文。
+const nameCategory = (s) => {
+    const c = String(s).trimStart().charCodeAt(0);
+    if (c >= 48 && c <= 57) return 0;            // 0-9
+    if (c >= 0x4e00 && c <= 0x9fff) return 2;    // CJK 统一表意文字
+    // 标点：ASCII 标点区 + 全角/CJK 标点（含括号、书名号等）
+    const isPunct =
+        (c >= 0x21 && c <= 0x2f) || (c >= 0x3a && c <= 0x40) ||
+        (c >= 0x5b && c <= 0x60) || (c >= 0x7b && c <= 0x7e) ||  // 半角标点
+        (c >= 0x3000 && c <= 0x303f) ||   // CJK 符号与标点（、。「」【】《》等）
+        (c >= 0xff00 && c <= 0xff0f) || (c >= 0xff1a && c <= 0xff20) ||
+        (c >= 0xff3b && c <= 0xff40) || (c >= 0xff5b && c <= 0xff65);  // 全角标点
+    if (isPunct) return 1;
+    return 3;                                     // 拉丁字母及其它
+};
+
+// 标点组内子级：0=全角标点（在前）、1=半角标点（在后）。
+const punctWidth = (s) => {
+    const c = String(s).trimStart().charCodeAt(0);
+    return c < 0x80 ? 1 : 0;   // ASCII (<0x80) = 半角，排后面
+};
+
 export const naturalCompare = (a, b) => {
+    // 先按类别分组：数字 < 标点 < 中文 < 英文
+    const ca = nameCategory(a), cb = nameCategory(b);
+    if (ca !== cb) return ca - cb;
+
+    // 标点组内：全角在前，半角在后
+    if (ca === 1) {
+        const wa = punctWidth(a), wb = punctWidth(b);
+        if (wa !== wb) return wa - wb;
+    }
+
+    // 同组内走自然排序（数字段按数值，其余按本地化字符比较）
     const re = /(\d+)|(\D+)/g;
     const tokenA = String(a).match(re) || [];
     const tokenB = String(b).match(re) || [];
