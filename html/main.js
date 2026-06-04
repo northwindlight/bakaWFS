@@ -434,9 +434,11 @@ createApp({
         });
 
         // 取汉化组封面墙（聚合后前 4 部，连载靠 .series-* 标记）
+        // 先自然排序，封面墙取的「前 4 部」才和封面网格显示顺序一致（后端 children 是默认排序）。
         const groupBooks = (node) => {
             if (!node || !node.children) return [];
-            const items = node.children.filter(c => isMangaBook(c));
+            const items = node.children.filter(c => isMangaBook(c))
+                .sort((a, b) => naturalCompare(a.name, b.name));
             const seriesMap = new Map();
             const works = [];
             for (const n of items) {
@@ -572,7 +574,9 @@ createApp({
             // 2) 分组层：聚合连载后取前 4 部作品的封面（键= "组名/作品名"）
             for (const g of sortedChildren) {
                 if (g.type !== 'dir') continue;
-                const items = (g.children || []).filter(c => isMangaBook(c));
+                // 自然排序后再取前 4 部，和 groupBooks 渲染的封面墙选用同一批本子
+                const items = (g.children || []).filter(c => isMangaBook(c))
+                    .sort((a, b) => naturalCompare(a.name, b.name));
                 // 聚合连载（靠 .series-* 标记）
                 const sMap = new Map();
                 const works = [];
