@@ -2,6 +2,7 @@ package test
 
 import (
 	"bakaWFS/internal/fileops"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -206,6 +207,51 @@ func TestQueueAuditLog(t *testing.T) {
 	content := string(data)
 	if !strings.Contains(content, "baka") || !strings.Contains(content, "delete") {
 		t.Errorf("audit log missing expected fields: %s", content)
+	}
+}
+
+// TestQueueAuditLogInjection 用含引号/反斜杠/换行的恶意文件名做操作，断言审计日志
+// 那行仍是合法 JSON 且 path 字段精确还原——证明 JSON 注入被 json.Marshal 转义挡住。
+// 旧的手工拼接版会让这行 JSON 损坏甚至被注入伪造条目。
+func TestQueueAuditLogInjection(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "audit.log")
+	logger := slog.New(slog.DiscardHandler)
+	q, err := fileops.New(logger, logPath)
+	if err != nil {
+		t.Fatalf("New queue with audit: %v", err)
+	}
+	defer q.Close()
+
+	// 文件系统上合法、但对手拼 JSON 是毒药的名字
+	evil := filepath.Join(dir, "ev\"il\\\n\",\"action\":\"FORGED")
+	q.Enqueue(fileops.Op{
+		Type:     fileops.OpMkdir,
+		Dst:      evil,
+		Username: "ba\"ka",
+	})
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	// 审计日志是 JSONL：应当恰好一条记录（注入若成功会冒出第二条/损坏行）
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected exactly 1 audit line, got %d: %q", len(lines), string(data))
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {
+		t.Fatalf("audit line not valid JSON (injection broke it): %v\nline=%q", err, lines[0])
+	}
+	if rec["path"] != evil {
+		t.Errorf("path not faithfully recorded:\n got=%q\nwant=%q", rec["path"], evil)
+	}
+	if rec["user"] != "ba\"ka" {
+		t.Errorf("user not faithfully recorded: got=%q", rec["user"])
+	}
+	if rec["action"] != "mkdir" {
+		t.Errorf("action tampered: got=%q (forged injection may have leaked)", rec["action"])
 	}
 }
 

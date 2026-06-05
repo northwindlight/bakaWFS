@@ -2,6 +2,8 @@ package test
 
 import (
 	"bytes"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -237,6 +239,40 @@ func TestThumbGetUnsupported(t *testing.T) {
 	gen, _ := thumb.New(cacheDir)
 	if _, err := gen.Get(p, thumb.SizeList); err == nil {
 		t.Error("expected error decoding non-image file")
+	}
+}
+
+// TestThumbRejectsDecompressionBomb 构造一张文件很小、但 IHDR 声明超大尺寸的 PNG
+// （真实解压炸弹的形态），断言 generate 在 DecodeConfig 阶段就拒绝，绝不进 image.Decode
+// 去按 36 亿像素分配内存。这样测试本身也是轻量的（不真的造大图）。
+func TestThumbRejectsDecompressionBomb(t *testing.T) {
+	srcDir := t.TempDir()
+	cacheDir := t.TempDir()
+	p := filepath.Join(srcDir, "bomb.png")
+
+	// 先造一张正常小图，再篡改 IHDR 里声明的宽高 + 修正 CRC。
+	makeImage(t, p, 8, 8)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// PNG: 8 字节魔数 + IHDR chunk(4 长度 + 4 "IHDR" + 13 数据 + 4 CRC)。
+	// 宽在偏移 16，高在偏移 20；CRC 覆盖 "IHDR"+13 字节数据(偏移 12..29)。
+	binary.BigEndian.PutUint32(data[16:], 60000) // 宽
+	binary.BigEndian.PutUint32(data[20:], 60000) // 高 → 36 亿像素，远超 1 亿阈值
+	crc := crc32.ChecksumIEEE(data[12:29])
+	binary.BigEndian.PutUint32(data[29:], crc)
+	if err := os.WriteFile(p, data, 0644); err != nil {
+		t.Fatalf("write bomb: %v", err)
+	}
+
+	gen, _ := thumb.New(cacheDir)
+	if _, err := gen.Get(p, thumb.SizeList); err == nil {
+		t.Fatal("expected error for oversized image, got nil (bomb not rejected)")
+	}
+	// 拒绝路径不应留下任何缓存
+	if n := countFiles(t, cacheDir); n != 0 {
+		t.Errorf("rejected bomb still wrote %d cache files", n)
 	}
 }
 

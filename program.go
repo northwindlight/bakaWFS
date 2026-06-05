@@ -240,7 +240,11 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 			return fmt.Errorf("加载证书失败: %w", err)
 		}
 		logger.Info("加载证书成功", "cert", cfg.CertPath, "key", cfg.KeyPath)
-		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+		tlsConfig = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			// 显式最低 TLS 1.2，挡掉已弃用且有已知弱点的 TLS 1.0/1.1
+			MinVersion: tls.VersionTLS12,
+		}
 	}
 
 	tempDir := filepath.Join(".", cfg.TempDir)
@@ -327,14 +331,22 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 	printLogo(output)
 	logger.Info("baka文件服务器已启动")
 
+	// 只设头部读取与空闲超时，防 Slowloris 慢速连接耗尽。
+	// 故意不设 ReadTimeout/WriteTimeout：本服务有大文件上传(10G)/下载(100G)长连接，
+	// 整体读写超时会误杀正常传输；ReadHeaderTimeout 只限请求头、与请求体大小无关。
+	const readHeaderTimeout = 10 * time.Second
+	const idleTimeout = 120 * time.Second
+
 	errCh := make(chan error, 2)
 
 	if cfg.HttpsEnabled() {
 		httpsAddr := fmt.Sprintf("%s:%d", cfg.Address, cfg.HttpsPort)
 		httpsServer := &http.Server{
-			Addr:      httpsAddr,
-			TLSConfig: tlsConfig,
-			Handler:   globalHandler,
+			Addr:              httpsAddr,
+			TLSConfig:         tlsConfig,
+			Handler:           globalHandler,
+			ReadHeaderTimeout: readHeaderTimeout,
+			IdleTimeout:       idleTimeout,
 		}
 		logger.Info("HTTPS 已启动", "addr", httpsAddr)
 		go func() {
@@ -367,8 +379,10 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 			logger.Info("HTTP 已启动", "addr", httpAddr)
 		}
 		httpServer := &http.Server{
-			Addr:    httpAddr,
-			Handler: httpHandler,
+			Addr:              httpAddr,
+			Handler:           httpHandler,
+			ReadHeaderTimeout: readHeaderTimeout,
+			IdleTimeout:       idleTimeout,
 		}
 		go func() {
 			if err := httpServer.ListenAndServe(); err != nil {

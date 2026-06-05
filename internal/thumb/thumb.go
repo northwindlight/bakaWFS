@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/jpeg"
 	_ "image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,12 +42,19 @@ func ParseSize(s string) Size {
 	return SizeList
 }
 
+// maxConcurrentDecode 同时进行的图片解码数上限。单张解码最坏占 ~800MB
+// （见 maxDecodePixels），限并发防止 /thumbs 批量接口 500 路径并发涌入时
+// 内存峰值叠加爆掉。缓存命中的快路径不解码，不受此限制。
+const maxConcurrentDecode = 4
+
 // Generator 负责生成并缓存缩略图。
 type Generator struct {
 	cacheDir string
 	// 同一 key 的并发请求只生成一次
 	mu      sync.Mutex
 	flights map[string]*sync.WaitGroup
+	// 限制并发解码数（带缓冲 channel 当信号量），控制内存峰值
+	decodeSem chan struct{}
 }
 
 func New(cacheDir string) (*Generator, error) {
@@ -54,8 +62,9 @@ func New(cacheDir string) (*Generator, error) {
 		return nil, fmt.Errorf("创建缩略图缓存目录失败: %w", err)
 	}
 	return &Generator{
-		cacheDir: cacheDir,
-		flights:  make(map[string]*sync.WaitGroup),
+		cacheDir:  cacheDir,
+		flights:   make(map[string]*sync.WaitGroup),
+		decodeSem: make(chan struct{}, maxConcurrentDecode),
 	}, nil
 }
 
@@ -144,12 +153,36 @@ func (g *Generator) Get(srcPath string, sz Size) ([]byte, error) {
 	return data, nil
 }
 
+// maxDecodePixels 解码前的像素总数硬上限，防解压炸弹（小文件声明超大尺寸 →
+// image.Decode 按尺寸分配内存 → OOM）。卡的是解码后内存（≈像素×4 字节），与文件
+// 大小无关。2 亿像素 ≈ 800MB 解码内存，约 14000×14000：给超长条漫/高清扫图留足
+// 空间，又稳稳挡住动辄声明几十亿像素的炸弹。超过的直接拒绝，绝不进 image.Decode。
+const maxDecodePixels = 200 * 1000 * 1000
+
 func (g *Generator) generate(srcPath string, sz Size) ([]byte, error) {
+	// 限并发解码：控制同时驻留内存的解码图数量，防批量请求内存峰值叠加
+	g.decodeSem <- struct{}{}
+	defer func() { <-g.decodeSem }()
+
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+
+	// 先只读图头拿到声明尺寸（不解压像素，近乎零成本），超阈值直接拒绝，
+	// 避免 image.Decode 按超大尺寸分配内存被打爆。int64 相乘防 int 溢出绕过。
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, fmt.Errorf("读取图片尺寸失败: %w", err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxDecodePixels {
+		return nil, fmt.Errorf("图片尺寸过大，拒绝生成缩略图: %dx%d", cfg.Width, cfg.Height)
+	}
+	// DecodeConfig 已读走文件头，需把读取位置重置回开头再 Decode
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
 
 	src, _, err := image.Decode(f)
 	if err != nil {
