@@ -118,14 +118,29 @@ func CalculateFilexxhash(path string) (string, error) {
 // maxScanDepth 限制目录递归深度，防止软链环导致无限递归爆栈。
 const maxScanDepth = 64
 
+// ScanDir 递归扫描整棵树（深度上限 maxScanDepth，防软链环）。供搜索用整树。
 func ScanDir(path string) (*Node, error) {
-	return scanDir(path, 0, make(map[string]bool))
+	return scanDir(path, 0, maxScanDepth, make(map[string]bool))
 }
 
-// scanDir 递归扫描。depth 控制最大深度；visited 记录已进入的目录真实路径，
-// 两者共同防止软链环（A→B→A）造成无限递归。os.Stat 跟随软链，
+// ScanDirDepth 浅扫描，最多展开 limit 层（limit=1 即仅当前层直接子项，
+// 子目录只给名不展开；limit=2 再多预拉一层）。供浏览懒加载用。
+// limit 仍受 maxScanDepth 兜底防环。
+func ScanDirDepth(path string, limit int) (*Node, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > maxScanDepth {
+		limit = maxScanDepth
+	}
+	return scanDir(path, 0, limit, make(map[string]bool))
+}
+
+// scanDir 递归扫描。depth 是当前深度，limit 是本次扫描允许展开的最大层数
+// （与 maxScanDepth 取小者生效）；visited 记录已进入的目录真实路径，
+// 防止软链环（A→B→A）造成无限递归。os.Stat 跟随软链，
 // 所以软链目录会被正常当作目录遍历，但同一真实目录不会重复进入。
-func scanDir(path string, depth int, visited map[string]bool) (*Node, error) {
+func scanDir(path string, depth, limit int, visited map[string]bool) (*Node, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -141,8 +156,8 @@ func scanDir(path string, depth int, visited map[string]bool) (*Node, error) {
 		node.Type = "dir"
 		node.Size = 0
 
-		if depth >= maxScanDepth {
-			return node, nil // 触底，不再深入，返回空目录节点
+		if depth >= limit {
+			return node, nil // 触底（达本次扫描层数上限），返回不展开的目录节点
 		}
 		// 用真实路径判环：软链指向已访问过的目录则跳过其子树
 		real, rerr := filepath.EvalSymlinks(path)
@@ -161,7 +176,7 @@ func scanDir(path string, depth int, visited map[string]bool) (*Node, error) {
 		}
 
 		for _, entry := range entries {
-			child, err := scanDir(filepath.Join(path, entry.Name()), depth+1, visited)
+			child, err := scanDir(filepath.Join(path, entry.Name()), depth+1, limit, visited)
 			if err != nil {
 				continue // 跳过无权限的文件
 			}

@@ -13,7 +13,6 @@ import {
 createApp({
     setup() {
         const API_BASE = '';
-        const rootData = ref(null);
         const currentDir = ref(null);
         const pathStack = ref([]);
         const loading = ref(false);
@@ -102,7 +101,7 @@ createApp({
                 currentRole.value = data.role || '';
                 showLogin.value = false;
                 loginForm.value = { username: '', password: '' };
-                if (!rootData.value) fetchData();
+                if (!currentDir.value) loadLevel(parseHash());
             } catch (e) {
                 alert(i18n.errorPrefix + e.message);
             }
@@ -131,36 +130,81 @@ createApp({
             }
         };
 
-        const fetchData = async () => {
+        // ── hash 路由 + 懒加载 ────────────────────────────────
+        // URL 形如 #/汉化组A/本子，每段 encodeURIComponent。当前所在目录由 hash 决定，
+        // 浏览器前进/后退触发 hashchange → 按路径向 /list?path= 拉那一层（懒加载，深度2）。
+        // 整树只在搜索时才向 /tree 拉一次。
+
+        const authHeaders = () => {
+            const token = localStorage.getItem('baka_token');
+            return token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+        };
+
+        // 当前 hash → 路径段数组（已解码）。空 hash = 根。
+        const parseHash = () => {
+            let h = location.hash || '';
+            if (h.startsWith('#')) h = h.slice(1);
+            if (h.startsWith('/')) h = h.slice(1);
+            if (!h) return [];
+            return h.split('/').filter(Boolean).map(s => {
+                try { return decodeURIComponent(s); } catch (_) { return s; }
+            });
+        };
+
+        // 路径段数组 → hash 字符串。
+        const buildHash = (names) => '#/' + names.map(encodeURIComponent).join('/');
+
+        // 设置 hash（触发 hashchange 进而加载）。与当前 hash 相同则直接重载本层。
+        const navigateTo = (names) => {
+            const target = buildHash(names);
+            if (location.hash === target) {
+                loadLevel(names);
+            } else {
+                location.hash = target;
+            }
+        };
+
+        // 向 /list?path= 拉指定层（深度2），刷新 currentDir + pathStack。
+        const loadLevel = async (names) => {
             loading.value = true;
             try {
                 if (isLoggedIn.value) {
                     const tokenValid = await verifyToken();
                     if (!tokenValid) { loading.value = false; return; }
                 }
-                const token = localStorage.getItem('baka_token');
-                const listOpts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
-                const res = await fetchWithRetry(`${API_BASE}/list`, listOpts, 3, 500);
+                const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
+                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
                 const data = await res.json();
-                rootData.value = data;
-                // 恢复当前路径
-                if (pathStack.value.length === 0) {
-                    currentDir.value = data;
-                } else {
-                    let node = data;
-                    const names = pathStack.value.map(p => p.name);
-                    for (const name of names) {
-                        const child = node.children?.find(c => c.name === name && c.type === 'dir');
-                        if (child) { node = child; } else { node = data; break; }
-                    }
-                    currentDir.value = node;
+                currentDir.value = data;
+                // pathStack 用名字段重建（节点本身只需 name 供面包屑/跳转用）
+                pathStack.value = names.map(n => ({ name: n }));
+                // 搜索跳转到文件：本层加载完后打开该文件查看器
+                if (pendingOpenFile.value) {
+                    const fname = pendingOpenFile.value;
+                    pendingOpenFile.value = null;
+                    const f = (data.children || []).find(c => c.name === fname && c.type === 'file');
+                    if (f) openFileViewer(f);
                 }
             } catch (e) {
                 console.error(e);
+                // 路径失效（被删/改名）→ 回根
+                if (names.length) { navigateTo([]); return; }
                 alert(i18n.loadFailed);
             } finally {
                 loading.value = false;
             }
+        };
+
+        // hashchange 入口：按当前 hash 加载对应层。
+        const onHashChange = () => { loadLevel(parseHash()); };
+
+        // 刷新当前层（路径不变）。
+        const refreshCurrent = () => loadLevel(parseHash());
+
+        // 写操作后：刷新当前层，并让搜索整树缓存失效（下次搜索重新拉）。
+        const refreshAfterWrite = () => {
+            searchTree.value = null;
+            return loadLevel(parseHash());
         };
 
         // ── 统一上传入口 ───────────────────────
@@ -195,7 +239,7 @@ createApp({
                 };
                 try {
                     await doDirectUpload({ file, fullPath, taskId, token, API_BASE, progressData, uploadTasks, i18n });
-                    fetchData();
+                    refreshAfterWrite();
                 } catch (e) {
                     alert(i18n.uploadFailed + e.message);
                 } finally {
@@ -229,7 +273,7 @@ createApp({
                         file, fullPath, taskId, total, chunkSize, token, 
                         API_BASE, progressData, controller
                     });
-                    fetchData();
+                    refreshAfterWrite();
                 } catch (e) {
                     if (!controller.signal.aborted) {
                         console.error('分片上传错误:', e);
@@ -244,7 +288,7 @@ createApp({
         };
 
         const getFileUrl = (fileName) => {
-            if (!rootData.value) return '#';
+            if (!currentDir.value) return '#';
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
             return `${API_BASE}/files/${pathParts.join('/')}`;
         };
@@ -288,35 +332,53 @@ createApp({
             });
         });
 
+        // 导航全部走 hash（改 location.hash → hashchange → loadLevel），
+        // 这样浏览器前进/后退键天然生效。
         const goToLevel = (index) => {
-            pathStack.value = pathStack.value.slice(0, index + 1);
-            currentDir.value = pathStack.value[pathStack.value.length - 1];
+            navigateTo(pathStack.value.slice(0, index + 1).map(p => p.name));
         };
 
-        const goHome = () => {
-            pathStack.value = [];
-            currentDir.value = rootData.value;
-        };
+        const goHome = () => { navigateTo([]); };
 
         const handleItemClick = (item) => {
             if (item.type === 'dir') {
-                pathStack.value.push(item);
-                currentDir.value = item;
+                navigateTo([...pathStack.value.map(p => p.name), item.name]);
             } else {
                 openFileViewer(item);
             }
         };
 
         // ── 搜索 ─────────────────────────────────────
-        // 纯前端：rootData 已是整棵目录树（ScanDir 递归返回），搜索在内存里
-        // 递归遍历，不触后端、不破“文件系统即唯一状态”。
+        // 浏览走懒加载（只当前层），整树只在搜索时才向 /tree 拉一次并缓存，
+        // 之后的搜索都在这份缓存里递归过滤——不触后端、不破“文件系统即唯一状态”。
         const isSearching = computed(() => searchQuery.value.trim() !== '');
+        const searchTree = ref(null);       // /tree 整树缓存
+        const searchTreeLoading = ref(false);
+        // 跳转到搜索结果（文件）后，待当前层加载完再打开的文件名
+        const pendingOpenFile = ref(null);
 
-        // 递归收集名字命中的节点，每个结果带 trail（从根的直接子节点到该节点父级的祖先链），
-        // 供点击后重建 pathStack 跳转。trail 不含 rootData 自身，含目标的各级父目录节点。
+        // 首次进入搜索时拉整树（缓存）。
+        const loadSearchTree = async () => {
+            if (searchTree.value || searchTreeLoading.value) return;
+            searchTreeLoading.value = true;
+            try {
+                if (isLoggedIn.value) {
+                    const ok = await verifyToken();
+                    if (!ok) { searchTreeLoading.value = false; return; }
+                }
+                const res = await fetchWithRetry(`${API_BASE}/tree`, authHeaders(), 3, 500);
+                searchTree.value = await res.json();
+            } catch (e) {
+                console.error('加载搜索整树失败', e);
+            } finally {
+                searchTreeLoading.value = false;
+            }
+        };
+
+        // 递归收集名字命中的节点，每个结果带 trail（祖先目录名链，不含根）。
         const searchResults = computed(() => {
             const q = searchQuery.value.trim().toLowerCase();
-            if (!q || !rootData.value) return [];
+            if (!q || !searchTree.value) return [];
             const out = [];
             const walk = (node, trail) => {
                 for (const child of node.children || []) {
@@ -324,35 +386,36 @@ createApp({
                         out.push({ node: child, trail });
                     }
                     if (child.type === 'dir' && child.children) {
-                        walk(child, [...trail, child]);
+                        walk(child, [...trail, child.name]);
                     }
                 }
             };
-            walk(rootData.value, []);
+            walk(searchTree.value, []);
             return out;
         });
 
-        // 命中项所在目录的展示路径（面包屑文字），根目录显示为 “/”。
+        // 命中项所在目录的展示路径，根目录显示为 “/”。trail 现在是名字数组。
         const resultPath = (trail) => {
             if (!trail.length) return '/';
-            return '/' + trail.map(n => n.name).join('/');
+            return '/' + trail.join('/');
         };
 
-        // 点击搜索结果：用 trail 重建导航栈，跳到该项所在目录；文件则在父目录里打开查看器。
+        // 点击搜索结果：跳到该项所在目录（hash 导航）；文件则到父目录后打开查看器。
         const goToSearchResult = (result) => {
             const { node, trail } = result;
-            pathStack.value = [...trail];
-            currentDir.value = trail.length ? trail[trail.length - 1] : rootData.value;
             searchQuery.value = '';
             if (node.type === 'dir') {
-                pathStack.value.push(node);
-                currentDir.value = node;
+                navigateTo([...trail, node.name]);
             } else {
-                openFileViewer(node);
+                pendingOpenFile.value = node.name;
+                navigateTo(trail);
             }
         };
 
         const clearSearch = () => { searchQuery.value = ''; };
+
+        // 进入/退出搜索态：进入时确保整树已加载。
+        watch(isSearching, (on) => { if (on) loadSearchTree(); });
 
         // ── 文件查看器逻辑 ───────────────────────
         const viewer = ref({ show: false, type: null });
@@ -404,8 +467,20 @@ createApp({
             viewerCurrentImageUrl.value = url;
         });
 
+        // 目标选择器（复制/移动用）也走懒加载：pickerCurrent 是当前层的已加载节点。
+        const pickerCurrent = ref(null);
+        const loadPickerLevel = async (names) => {
+            try {
+                const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
+                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
+                pickerCurrent.value = await res.json();
+                pickerStack.value = names.map(n => ({ name: n }));
+            } catch (e) {
+                console.error('选择器加载失败', e);
+            }
+        };
         const pickerDirs = computed(() => {
-            const dir = pickerStack.value.length === 0 ? rootData.value : pickerStack.value[pickerStack.value.length - 1];
+            const dir = pickerCurrent.value;
             if (!dir || !dir.children) return [];
             return dir.children.filter(c => c.type === 'dir').sort((a, b) => naturalCompare(a.name, b.name));
         });
@@ -619,7 +694,7 @@ createApp({
         };
 
         const initPicker = () => {
-            pickerStack.value = [...pathStack.value];
+            loadPickerLevel(pathStack.value.map(p => p.name));
         };
 
         const toggleOpsPanel = (item) => {
@@ -675,12 +750,12 @@ createApp({
         };
 
         const pickerEnter = (dir) => {
-            pickerStack.value.push(dir);
+            loadPickerLevel([...pickerStack.value.map(p => p.name), dir.name]);
         };
 
         const pickerGoToLevel = (index) => {
-            if (index < 0) { pickerStack.value = []; return; }
-            pickerStack.value = pickerStack.value.slice(0, index + 1);
+            if (index < 0) { loadPickerLevel([]); return; }
+            loadPickerLevel(pickerStack.value.slice(0, index + 1).map(p => p.name));
         };
 
         const getPickerPath = (name) => {
@@ -704,7 +779,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showRenameModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -725,7 +800,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showCopyModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -744,7 +819,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showDeleteConfirm.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -772,7 +847,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showMkdirModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.mkdirFailed + e.message);
             }
@@ -793,12 +868,14 @@ createApp({
             }
 
             if (isLoggedIn.value) await verifyToken();
-            fetchData();
+            window.addEventListener('hashchange', onHashChange);
+            loadLevel(parseHash());   // 按初始 hash 加载（支持直链/刷新到某目录）
             window.addEventListener('keydown', onViewerKeydown);
         });
 
         onUnmounted(() => {
             window.removeEventListener('keydown', onViewerKeydown);
+            window.removeEventListener('hashchange', onHashChange);
             stopPolling();
         });
 

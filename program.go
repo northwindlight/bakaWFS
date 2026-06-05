@@ -270,10 +270,12 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 	mux.HandleFunc("/api/config", ah.HandleServerConfig)
 	if cfg.AuthMode {
 		mux.HandleFunc("/list", authMW(fh.HandleNode))
+		mux.HandleFunc("/tree", authMW(fh.HandleTree))
 		mux.HandleFunc("/files/", authMW(handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath))))))
 		logger.Info("鉴权模式已启用，所有接口需登录")
 	} else {
 		mux.HandleFunc("/list", fh.HandleNode)
+		mux.HandleFunc("/tree", fh.HandleTree)
 		mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
 	}
 	// adminMW = 先验 JWT，再要求 role==admin。写操作专用。
