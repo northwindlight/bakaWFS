@@ -16,7 +16,6 @@ createApp({
         const currentDir = ref(null);      // 当前层节点（/list?path= 浅扫 depth2 的结果）
         const pathStack = ref([]);         // 各层 { name }，供面包屑/拼路径（懒加载下只存名字）
         const loading = ref(false);
-        const currentSeries = ref(null);   // 连载话列表视图（非 null 时显示话列表而非海报网格）
 
         // ── 搜索（整树一次性拉 /tree，仅搜索时）───────────────
         const searchQuery = ref('');
@@ -26,7 +25,6 @@ createApp({
         // 搜索跳转到漫画本/文件后，待本层加载完再打开（见 loadLevel）
         const pendingOpenFile = ref(null);   // 打开指定文件名
         const pendingOpenBook = ref(false);  // 打开本层漫画本第一页
-        const pendingOpenSeries = ref(null); // 在本层（汉化组层）展开指定连载的话列表
         const showLogin = ref(false);
         const showRemoteModal = ref(false);
         const showProgressModal = ref(false);
@@ -183,7 +181,6 @@ createApp({
                 const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
                 const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
                 const data = await res.json();
-                currentSeries.value = null;     // 切层退出连载话列表视图
                 currentDir.value = data;
                 // pathStack 用名字段重建（懒加载下节点只需 name 供面包屑/拼路径）
                 pathStack.value = names.map(n => ({ name: n }));
@@ -205,15 +202,6 @@ createApp({
                     nextTick(() => {
                         const f = (data.children || []).find(c => c.name === fname && c.type === 'file');
                         if (f) openFileViewer(f);
-                    });
-                }
-                // 搜索跳转到连载：本层（汉化组层）加载完展开该连载的话列表
-                if (pendingOpenSeries.value) {
-                    const sname = pendingOpenSeries.value;
-                    pendingOpenSeries.value = null;
-                    nextTick(() => {
-                        const s = aggregatedBooks.value.find(b => b.type === 'series' && b.name === sname);
-                        if (s) openSeries(s);
                     });
                 }
             } catch (e) {
@@ -257,32 +245,17 @@ createApp({
         };
 
         // 在整树上找名字含 query 的节点，返回结果数组。
-        // - 普通命中：{ type:'node', node, trail }（trail 为祖先名字数组，不含自身）
-        // - 连载聚合命中：{ type:'series', name(聚合名), groupTrail(汉化组路径), coverNode }
-        //   连载聚合名只存在于话目录里的 .series-<名> 标记，整树上没有对应节点，
-        //   故单独索引：遇带 series 标记的话目录，按「汉化组路径+聚合名」去重产一条。
+        // 返回 { node, trail }（trail 为祖先名字数组，不含自身）。连载作品现在是真实目录，
+        // 搜作品名直接命中该目录节点，无需对 .series 标记做特殊索引。
         const searchResults = computed(() => {
             const q = searchQuery.value.trim().toLowerCase();
             if (!q || !searchTree.value) return [];
             const out = [];
-            const seenSeries = new Set();   // 「groupTrail\0聚合名」去重
             const walk = (node, trail) => {
                 for (const c of (node.children || [])) {
                     if (c.name.startsWith('.')) continue;   // 隐藏元数据不参与搜索
-                    // 连载话目录：把聚合名也纳入匹配（命中跳到汉化组层并展开该连载）
-                    if (c.type === 'dir') {
-                        const mark = seriesMarkFile(c);
-                        if (mark && mark.toLowerCase().includes(q)) {
-                            const key = trail.join('/') + '\0' + mark;
-                            if (!seenSeries.has(key)) {
-                                seenSeries.add(key);
-                                out.push({ type: 'series', name: mark, groupTrail: trail, coverNode: c });
-                                if (out.length >= 200) return;
-                            }
-                        }
-                    }
                     if (c.name.toLowerCase().includes(q)) {
-                        out.push({ type: 'node', node: c, trail });
+                        out.push({ node: c, trail });
                         if (out.length >= 200) return;
                     }
                     if (c.type === 'dir') walk(c, [...trail, c.name]);
@@ -296,17 +269,10 @@ createApp({
         // 搜索结果的展示路径
         const resultPath = (trail) => '/' + trail.join('/');
 
-        // 点击搜索结果：
-        // - 连载聚合：跳到汉化组层，加载完展开该连载的话列表（openSeries）
-        // - 目录：漫画本进阅读器，普通目录进入浏览
-        // - 文件：进入其父目录并打开
+        // 点击搜索结果：目录则进入（漫画本/话进阅读器，连载作品/普通目录进入浏览），
+        // 文件则进入其父目录并打开。
         const goToSearchResult = (result) => {
             clearSearch();
-            if (result.type === 'series') {
-                pendingOpenSeries.value = result.name;
-                navigateTo(result.groupTrail);
-                return;
-            }
             const { node, trail } = result;
             if (node.type === 'dir') {
                 if (isMangaBook(node)) pendingOpenBook.value = true;
@@ -468,45 +434,30 @@ createApp({
             ) && files.some(c => isImageFile(c.name));
         };
 
-        // ── 连载聚合（靠 .series-作品名 标记文件，不靠正则猜）───────────
-        // 话目录下放 .series-作品名 空文件，AI 扫码写。前端只读不猜。
-        const seriesMarkFile = (node) => {
-            if (!node || node.type !== 'dir' || !node.children) return null;
-            const m = node.children.find(c => c.type === 'file' && c.name.startsWith('.series-'));
-            return m ? m.name.slice(8) : null;  // '.series-'.length = 8
+        // ── 连载作品识别（方案 D：连载在目录结构上就是一层）───────────
+        // 连载作品目录 = 含子目录（各话）的目录；单本则 children 全是图片。
+        // eh_make_series 已把同一连载的多话收进 汉化组/作品名/，作品根放封面 1.jpg。
+        const isSeriesDir = (node) => {
+            if (!node || node.type !== 'dir' || !node.children) return false;
+            return node.children.some(c => c.type === 'dir');
         };
 
-        // 聚合：同标记名的漫画本合成一部连载；无标记的单本原样；非漫画目录保留。
-        // 返回 [{ name, type:'series'|'book'|'dir', node?, chapters?, coverNode? }]
+        // 连载作品的话数（直接子目录数）。
+        const chapterCount = (node) => {
+            if (!node || !node.children) return 0;
+            return node.children.filter(c => c.type === 'dir').length;
+        };
+
+        // 汉化组层的作品列表：单本（book，点击进阅读器）、连载作品（series，点击进话列表）、
+        // 其余普通目录（dir）。连载不再靠 .series 标记聚合——它本身就是一层目录。
+        // 返回 [{ name, type:'series'|'book'|'dir', node }]
         const aggregatedBooks = computed(() => {
-            const items = sortedFiles.value.filter(n => isMangaBook(n));
-            const seriesMap = new Map();
             const out = [];
-            for (const n of items) {
-                const mark = seriesMarkFile(n);
-                if (mark) {
-                    if (!seriesMap.has(mark)) {
-                        const entry = { name: mark, type: 'series', chapters: [] };
-                        seriesMap.set(mark, entry);
-                        out.push(entry);
-                    }
-                    seriesMap.get(mark).chapters.push(n);
-                } else {
-                    out.push({ name: n.name, type: 'book', node: n });
-                }
-            }
-            // 连载话按自然排序，封面取第一话
-            for (const e of out) {
-                if (e.type === 'series') {
-                    e.chapters.sort((a, b) => naturalCompare(a.name, b.name));
-                    e.coverNode = e.chapters[0];
-                }
-            }
-            // 补入非漫画子目录
             for (const n of sortedFiles.value) {
-                if (n.type === 'dir' && !isMangaBook(n)) {
-                    out.push({ name: n.name, type: 'dir', node: n });
-                }
+                if (n.type !== 'dir') continue;
+                if (isMangaBook(n)) out.push({ name: n.name, type: 'book', node: n });
+                else if (isSeriesDir(n)) out.push({ name: n.name, type: 'series', node: n });
+                else out.push({ name: n.name, type: 'dir', node: n });
             }
             return out;
         });
@@ -592,7 +543,7 @@ createApp({
 
         // 当前目录下：哪些子项是漫画本、哪些是普通目录/文件
         const currentIsBookGrid = computed(() =>
-            sortedFiles.value.some(n => isMangaBook(n))
+            sortedFiles.value.some(n => isMangaBook(n) || isSeriesDir(n))
         );
 
         // 分组网格（汉化组层）：靠爬虫标记文件判定，而非脆弱地推导子目录内容。
@@ -604,42 +555,20 @@ createApp({
             return ch.some(c => c.type === 'file' && CRAWL_MARK.test(c.name));
         });
 
-        // 取汉化组封面墙（聚合后前 4 部，连载靠 .series-* 标记）
-        // 先自然排序，封面墙取的「前 4 部」才和封面网格显示顺序一致（后端 children 是默认排序）。
+        // 取汉化组封面墙（前 4 部作品）。组列表层是浅扫（depth2），汉化组的直接子目录
+        // 就是「作品」（单本或连载作品目录），故直接列前 4 个子目录；封面按约定 组/作品/1.jpg
+        // 直取（单本是下载的 1.jpg、连载作品根有迁移时拷的 1.jpg），见 loadCovers。
         const groupBooks = (node) => {
             if (!node || !node.children) return [];
-            const items = node.children.filter(c => isMangaBook(c))
-                .sort((a, b) => naturalCompare(a.name, b.name));
-            const seriesMap = new Map();
-            const works = [];
-            for (const n of items) {
-                const mark = seriesMarkFile(n);
-                if (mark) {
-                    if (!seriesMap.has(mark)) {
-                        const entry = { name: mark, coverNode: n };
-                        seriesMap.set(mark, entry);
-                        works.push(entry);
-                    }
-                    // 取自然排序第一话当封面
-                    const cur = seriesMap.get(mark);
-                    if (naturalCompare(n.name, cur.coverNode.name) < 0) {
-                        cur.coverNode = n;
-                        cur.name = mark;
-                    }
-                } else {
-                    works.push({ name: n.name, coverNode: n });
-                }
-            }
-            return works.slice(0, 4);
+            return node.children
+                .filter(c => c.type === 'dir')
+                .sort((a, b) => naturalCompare(a.name, b.name))
+                .slice(0, 4)
+                .map(c => ({ name: c.name, coverNode: c }));
         };
         const groupBookCount = (node) => {
             if (!node || !node.children) return 0;
-            const items = node.children.filter(c => isMangaBook(c));
-            const keys = new Set();
-            for (const n of items) {
-                keys.add(seriesMarkFile(n) || n.name);
-            }
-            return keys.size;
+            return node.children.filter(c => c.type === 'dir').length;
         };
 
         // ── 列表缩略图批量加载 ───────────────────────
@@ -732,9 +661,10 @@ createApp({
             // 按界面显示顺序（自然排序）拉，封面才从上到下依次出现
             const sortedChildren = [...dir.children].sort((a, b) => naturalCompare(a.name, b.name));
 
-            // 1) 当前目录下的漫画本：封面 key = 本名
+            // 1) 当前目录下的作品：单本封面取首图 1.jpg；连载作品封面取根部 1.jpg
+            //    （迁移时已拷到作品根，是该目录的直接图片 child，bookCover 能取到）。
             for (const c of sortedChildren) {
-                if (!isMangaBook(c)) continue;
+                if (!isMangaBook(c) && !isSeriesDir(c)) continue;
                 const cover = bookCover(c);
                 if (!cover) continue;
                 const p = (prefix ? `${prefix}/` : '') + `${c.name}/${cover}`;
@@ -742,31 +672,14 @@ createApp({
                 paths.push(p);
             }
 
-            // 2) 分组层：聚合连载后取前 4 部作品的封面（键= "组名/作品名"）
+            // 2) 分组层（组列表层）：封面墙取每组前 4 本，封面按约定文件名 1.jpg
+            //    （img @error 回退 1.png，见 onCoverError）。组层是浅扫，本子未展开，
+            //    无法用 bookCover（需图片层），故复用 groupBooks(g) 列出本子目录后约定直取。
             for (const g of sortedChildren) {
                 if (g.type !== 'dir') continue;
-                // 自然排序后再取前 4 部，和 groupBooks 渲染的封面墙选用同一批本子
-                const items = (g.children || []).filter(c => isMangaBook(c))
-                    .sort((a, b) => naturalCompare(a.name, b.name));
-                // 聚合连载（靠 .series-* 标记）
-                const sMap = new Map();
-                const works = [];
-                for (const n of items) {
-                    const mark = seriesMarkFile(n);
-                    if (mark) {
-                        if (!sMap.has(mark)) { const e = { name: mark, coverNode: n }; sMap.set(mark, e); works.push(e); }
-                        const cur = sMap.get(mark);
-                        if (naturalCompare(n.name, cur.coverNode.name) < 0) cur.coverNode = n;
-                    } else {
-                        works.push({ name: n.name, coverNode: n });
-                    }
-                }
-                // 取前 4 部作品的封面
-                for (const w of works.slice(0, 4)) {
-                    const cover = bookCover(w.coverNode);
-                    if (!cover) continue;
-                    const p = (prefix ? `${prefix}/` : '') + `${g.name}/${w.coverNode.name}/${cover}`;
-                    pathToKey[p] = `${g.name}/${w.name}`;   // 键用聚合名
+                for (const w of groupBooks(g)) {
+                    const p = (prefix ? `${prefix}/` : '') + `${g.name}/${w.coverNode.name}/1.jpg`;
+                    pathToKey[p] = `${g.name}/${w.name}`;   // 键用作品名
                     paths.push(p);
                 }
             }
@@ -784,6 +697,15 @@ createApp({
                 next[pathToKey[relPath]] = `${API_BASE}/thumb/${enc}?size=mid${tokenQ}`;
             }
             coverMap.value = next;
+        };
+
+        // 组级封面墙按约定取 1.jpg，若该本封面其实是 1.png 则首次加载失败，
+        // 在此把 src 的 1.jpg 换成 1.png 重试一次（已回退过则不再换，避免死循环）。
+        const onCoverError = (e) => {
+            const img = e.target;
+            if (img.dataset.coverFallback || !img.src.includes('/1.jpg?')) return;
+            img.dataset.coverFallback = '1';
+            img.src = img.src.replace('/1.jpg?', '/1.png?');
         };
 
         // 批量拉当前目录下漫画本的 article.md 元数据（真标题）
@@ -806,18 +728,10 @@ createApp({
 
         const goHome = () => { navigateTo([]); };
 
-        // ── 连载系列视图 ───────────────────────
-        const openSeries = (series) => { currentSeries.value = series; };
-        const closeSeries = () => { currentSeries.value = null; };
-        // 进入连载某一话：话目录是当前层的直接子目录，跳到该话路径并打开第一页。
-        const openChapter = (chapterNode) => {
-            pendingOpenBook.value = true;
-            navigateTo([...pathStack.value.map(p => p.name), chapterNode.name]);
-        };
-
         const handleItemClick = (item) => {
             if (item.type === 'dir') {
-                // 漫画本：进入目录后直接翻页阅读（看第一页）
+                // 漫画本/话：进入目录后直接翻页阅读（看第一页）。
+                // 连载作品目录（isSeriesDir）不直接阅读——进入后看话列表（currentIsBookGrid）。
                 if (isMangaBook(item)) {
                     pendingOpenBook.value = true;
                 }
@@ -1364,7 +1278,7 @@ createApp({
             searchQuery, isSearching, searchTreeLoading, searchResults, resultPath, goToSearchResult, clearSearch,
             // 漫画版渲染
             isMangaBook, bookCover, bookPageCount, coverMap, currentIsBookGrid,
-            currentIsGroupGrid, groupBooks, groupBookCount, bookMeta, bookTitle, aggregatedBooks, currentSeries, openSeries, closeSeries, openChapter,
+            currentIsGroupGrid, groupBooks, groupBookCount, onCoverError, bookMeta, bookTitle, aggregatedBooks, isSeriesDir, chapterCount,
             // 文件操作
             opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
             opsTarget, pickerStack, renameName, copyName, pickerDirs,

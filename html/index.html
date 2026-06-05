@@ -542,27 +542,14 @@
                         </div>
                         <div v-else>
                             <p class="text-xs text-sky-400 px-2 mb-2">找到 {{ searchResults.length }} 个结果<span v-if="searchResults.length >= 200">（只显示前 200 个，缩小关键词试试）</span></p>
-                            <!-- 连载聚合结果 -->
                             <div v-for="(r, i) in searchResults" :key="i"
                                  @click="goToSearchResult(r)"
                                  class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-sky-50 cursor-pointer transition border-b border-sky-50/60">
-                                <template v-if="r.type === 'series'">
-                                    <span class="text-xl shrink-0">📚</span>
-                                    <div class="flex-1 min-w-0">
-                                        <div class="text-sm text-sky-800 font-bold truncate">
-                                            {{ r.name }}
-                                            <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-500 font-normal align-middle">连载</span>
-                                        </div>
-                                        <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.groupTrail) }}</div>
-                                    </div>
-                                </template>
-                                <template v-else>
-                                    <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
-                                    <div class="flex-1 min-w-0">
-                                        <div class="text-sm text-sky-800 font-bold truncate">{{ r.node.name }}</div>
-                                        <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.trail) }}</div>
-                                    </div>
-                                </template>
+                                <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm text-sky-800 font-bold truncate">{{ r.node.name }}</div>
+                                    <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.trail) }}</div>
+                                </div>
                             </div>
                             <div v-if="searchResults.length === 0" class="text-center py-24 text-sky-300">
                                 <p class="text-4xl mb-2">🫧</p>
@@ -581,7 +568,7 @@
                         <div v-for="g in sortedFiles" :key="g.name" class="group-card" @click="handleItemClick(g)">
                             <div class="group-wall">
                                 <template v-for="(b, i) in groupBooks(g)" :key="i">
-                                    <img v-if="coverMap[g.name + '/' + b.name]" :src="coverMap[g.name + '/' + b.name]" loading="lazy" draggable="false">
+                                    <img v-if="coverMap[g.name + '/' + b.name]" :src="coverMap[g.name + '/' + b.name]" @error="onCoverError" loading="lazy" draggable="false">
                                     <div v-else class="empty"></div>
                                 </template>
                                 <!-- 不足4张补空格 -->
@@ -594,37 +581,16 @@
                         </div>
                     </div>
 
-                    <!-- ── 连载话列表视图 ── -->
-                    <div v-else-if="currentSeries" class="flex flex-col h-full">
-                        <div class="px-3 py-2 border-b border-sky-50 flex items-center gap-2 shrink-0">
-                            <button @click="closeSeries()" class="w-8 h-8 flex items-center justify-center rounded-lg bg-sky-100/50 text-sky-600 text-lg hover:bg-sky-200 transition">←</button>
-                            <span class="font-bold text-sky-800 truncate">{{ currentSeries.name }}</span>
-                            <span class="text-xs text-sky-400 ml-auto">{{ currentSeries.chapters.length }} 话</span>
-                        </div>
-                        <div class="manga-grid flex-1 overflow-y-auto p-2">
-                            <div v-for="ch in currentSeries.chapters" :key="ch.name" class="poster" @click="openChapter(ch)">
-                                <img v-if="coverMap[ch.name]" :src="coverMap[ch.name]" class="poster-img" loading="lazy" draggable="false">
-                                <div v-else class="poster-placeholder">📖</div>
-                                <div class="poster-badge">{{ bookPageCount(ch) }}P</div>
-                                <div class="poster-glass">
-                                    <div class="poster-title">{{ ch.name }}</div>
-                                    <div class="poster-sub">{{ bookPageCount(ch) }} 页</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- ── 漫画海报网格模式（含漫画本时启用，聚合同作品多话/多卷）── -->
+                    <!-- ── 漫画海报网格模式（单本 + 连载作品 + 普通目录）── -->
                     <div v-else-if="currentIsBookGrid" class="manga-grid">
                         <template v-for="item in aggregatedBooks" :key="item.name">
-                            <!-- 连载作品：聚合卡（多话/多卷合一张，封面取第1话首图）-->
-                            <div v-if="item.type === 'series'" class="poster" @click="openSeries(item)">
-                                <img v-if="coverMap[item.coverNode.name]" :src="coverMap[item.coverNode.name]" class="poster-img" loading="lazy" draggable="false">
+                            <!-- 连载作品：点击进入作品目录看话列表；封面取作品根 1.jpg -->
+                            <div v-if="item.type === 'series'" class="poster" @click="handleItemClick(item.node)">
+                                <img v-if="coverMap[item.name]" :src="coverMap[item.name]" @error="onCoverError" class="poster-img" loading="lazy" draggable="false">
                                 <div v-else class="poster-placeholder">📚</div>
-                                <div class="poster-badge">{{ item.chapters.length }}话</div>
+                                <div class="poster-badge">{{ chapterCount(item.node) }}话</div>
                                 <div class="poster-glass">
                                     <div class="poster-title">{{ item.name }}</div>
-                                    <div class="poster-sub">{{ (bookMeta[item.coverNode.name] && bookMeta[item.coverNode.name].author) || '' }}</div>
                                 </div>
                             </div>
                             <!-- 单行本：海报卡片（标题取 article.md，回退目录名）-->
