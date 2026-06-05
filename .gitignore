@@ -9,6 +9,7 @@ users.yaml
 
 # 运行时产物
 .uploads/
+.thumbcache/
 
 # 文件存储目录（含软链到实际数据）
 files/

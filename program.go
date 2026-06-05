@@ -213,8 +213,12 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 
 	if _, err := os.Stat(cfg.UsersPath); err != nil {
 		logger.Warn("用户配置文件不存在，已生成默认配置，请迅速修改密码，如果在公网环境，请配置HTTPS", "用户配置路径:", cfg.UsersPath)
-		if err := config.EnsureUsersConfig(cfg.UsersPath); err != nil {
+		adminPw, err := config.EnsureUsersConfig(cfg.UsersPath)
+		if err != nil {
 			return fmt.Errorf("初始化用户配置失败: %w", err)
+		}
+		if adminPw != "" {
+			logger.Warn("已生成 admin 账号随机口令，请立即记下（仅打印这一次）", "username", "admin", "password", adminPw)
 		}
 	}
 
@@ -256,6 +260,7 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 	fh := handler.NewFileHandler(cfg, logger, downloader, queue)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
+	requireAdmin := handler.RequireAdmin(logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/config", ah.HandleServerConfig)
@@ -267,18 +272,21 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 		mux.HandleFunc("/list", fh.HandleNode)
 		mux.HandleFunc("/files/", handler.FileServerHandler(http.StripPrefix("/files/", http.FileServer(http.Dir(cfg.DirPath)))))
 	}
+	// adminMW = 先验 JWT，再要求 role==admin。写操作专用。
+	adminMW := func(h http.HandlerFunc) http.HandlerFunc { return authMW(requireAdmin(h)) }
 	mux.HandleFunc("/login", ah.HandleLogin)
-	mux.HandleFunc("/upload", authMW(fh.HandleUpload))
 	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
-	mux.HandleFunc("/remote-upload", authMW(fh.HandleRemoteUpload))
 	mux.HandleFunc("/progress", authMW(fh.HandleProgress))
-	mux.HandleFunc("/cancel", authMW(fh.HandleCancel))
-	mux.HandleFunc("/upload/chunk", authMW(fh.HandleChunkUpload))
-	mux.HandleFunc("/upload/merge", authMW(fh.HandleChunkMerge))
-	mux.HandleFunc("/delete", authMW(fh.HandleDelete))
-	mux.HandleFunc("/rename", authMW(fh.HandleRename))
-	mux.HandleFunc("/copy", authMW(fh.HandleCopy))
-	mux.HandleFunc("/mkdir", authMW(fh.HandleMkdir))
+	// 写操作：仅 admin
+	mux.HandleFunc("/upload", adminMW(fh.HandleUpload))
+	mux.HandleFunc("/remote-upload", adminMW(fh.HandleRemoteUpload))
+	mux.HandleFunc("/cancel", adminMW(fh.HandleCancel))
+	mux.HandleFunc("/upload/chunk", adminMW(fh.HandleChunkUpload))
+	mux.HandleFunc("/upload/merge", adminMW(fh.HandleChunkMerge))
+	mux.HandleFunc("/delete", adminMW(fh.HandleDelete))
+	mux.HandleFunc("/rename", adminMW(fh.HandleRename))
+	mux.HandleFunc("/copy", adminMW(fh.HandleCopy))
+	mux.HandleFunc("/mkdir", adminMW(fh.HandleMkdir))
 	if cfg.HtmlEnabled() {
 		mux.HandleFunc("/html/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))
 		mux.HandleFunc("/", handler.HtmlFileServerHandler(cfg.HtmlDir, embeddedHTML, logger))

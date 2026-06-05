@@ -18,6 +18,7 @@ type contextKey string
 
 const ContextKeyUsername contextKey = "username"
 const ContextKeyToken contextKey = "token"
+const ContextKeyRole contextKey = "role"
 
 // FileServerHandler 限制只允许 GET，并强制 Content-Disposition: attachment。
 func FileServerHandler(fs http.Handler) http.HandlerFunc {
@@ -73,7 +74,7 @@ func AuthMiddleware(authSvc *auth.Auth, logger *slog.Logger) func(http.HandlerFu
 				logger.Warn("请求缺少 token", "ip", clientIP(r), "path", r.URL.Path)
 				return
 			}
-			username, err := authSvc.VerifyToken(tokenString, r.Header.Get("User-Agent"))
+			username, role, err := authSvc.VerifyToken(tokenString, r.Header.Get("User-Agent"))
 			if err != nil {
 				http.Error(w, "Unauthorized: invalid token", http.StatusUnauthorized)
 				logger.Warn("无效 token", "ip", clientIP(r), "path", r.URL.Path, "error", err)
@@ -81,7 +82,24 @@ func AuthMiddleware(authSvc *auth.Auth, logger *slog.Logger) func(http.HandlerFu
 			}
 			ctx := context.WithValue(r.Context(), ContextKeyUsername, username)
 			ctx = context.WithValue(ctx, ContextKeyToken, tokenString)
+			ctx = context.WithValue(ctx, ContextKeyRole, role)
 			next(w, r.WithContext(ctx))
+		}
+	}
+}
+
+// RequireAdmin 拦截非 admin 角色的写操作，需放在 AuthMiddleware 之后（依赖 ContextKeyRole）。
+func RequireAdmin(logger *slog.Logger) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			role, _ := r.Context().Value(ContextKeyRole).(string)
+			if role != "admin" {
+				http.Error(w, "Forbidden: admin only", http.StatusForbidden)
+				username, _ := r.Context().Value(ContextKeyUsername).(string)
+				logger.Warn("非 admin 尝试写操作", "user", username, "role", role, "path", r.URL.Path, "ip", clientIP(r))
+				return
+			}
+			next(w, r)
 		}
 	}
 }

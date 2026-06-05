@@ -42,8 +42,11 @@ createApp({
 
         const isLoggedIn = ref(!!localStorage.getItem('baka_token'));
         const currentUser = ref(localStorage.getItem('baka_user') || '');
+        const currentRole = ref(localStorage.getItem('baka_role') || '');
         const loginForm = ref({ username: '', password: '' });
         const authMode = ref(false);
+        // 仅 admin 可见写操作入口（上传/删除/改名/新建/远程下载）；后端 403 兜底。
+        const isAdmin = computed(() => currentRole.value === 'admin');
 
         // 验证 token
         const verifyToken = async () => {
@@ -59,12 +62,18 @@ createApp({
                     if (data.token && data.token !== token) {
                         localStorage.setItem('baka_token', data.token);
                     }
+                    if (data.role) {
+                        localStorage.setItem('baka_role', data.role);
+                        currentRole.value = data.role;
+                    }
                     return true;
                 } else {
                     localStorage.removeItem('baka_token');
                     localStorage.removeItem('baka_user');
+                    localStorage.removeItem('baka_role');
                     isLoggedIn.value = false;
                     currentUser.value = '';
+                    currentRole.value = '';
                     alert(i18n.tokenExpired);
                     return false;
                 }
@@ -86,8 +95,10 @@ createApp({
                 const data = await res.json();
                 localStorage.setItem('baka_token', data.token);
                 localStorage.setItem('baka_user', data.username);
+                localStorage.setItem('baka_role', data.role || '');
                 isLoggedIn.value = true;
                 currentUser.value = data.username;
+                currentRole.value = data.role || '';
                 showLogin.value = false;
                 loginForm.value = { username: '', password: '' };
                 if (!rootData.value) fetchData();
@@ -100,6 +111,7 @@ createApp({
             localStorage.clear();
             isLoggedIn.value = false;
             currentUser.value = '';
+            currentRole.value = '';
             alert(i18n.loggedOut);
         };
 
@@ -744,7 +756,7 @@ createApp({
 
         return {
             i18n,
-            loading, isLoggedIn, currentUser, showLogin, loginForm, authMode, pathStack, sortedFiles,
+            loading, isLoggedIn, currentUser, currentRole, isAdmin, showLogin, loginForm, authMode, pathStack, sortedFiles,
             handleLogin, handleLogout, handleFileUpload, handleItemClick,
             goHome, goToLevel, formatSize, getFileUrl, downloadFile,
             showRemoteModal, showProgressModal, showUploadMenu, remoteUrl, progressData,
