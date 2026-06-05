@@ -216,6 +216,15 @@
                     </div>
                 </nav>
 
+                <!-- 搜索栏：纯前端全库递归过滤（基于已加载的整棵目录树） -->
+                <div class="px-3 py-2 border-b border-sky-50 flex items-center gap-2">
+                    <span class="text-sky-300 text-sm shrink-0">🔍</span>
+                    <input v-model="searchQuery" type="text" placeholder="搜索全库文件名…"
+                           class="flex-1 min-w-0 bg-transparent text-sm text-slate-600 placeholder-sky-300 outline-none">
+                    <button v-if="isSearching" @click="clearSearch"
+                            class="shrink-0 text-sky-400 hover:text-sky-600 text-sm px-1 select-none">✕</button>
+                </div>
+
                 <teleport to="body">
                     <div v-if="showRemoteModal" class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-sky-900/20 backdrop-blur-sm">
                         <div class="glass p-6 w-full max-w-md shadow-2xl">
@@ -393,6 +402,29 @@
                     <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-sky-400">
                         <div class="text-4xl animate-bounce">🧊</div>
                         <p class="mt-4">琪露诺正在数数...</p>
+                    </div>
+
+                    <!-- 搜索结果：跨目录平铺，显示所在路径，点击跳转 -->
+                    <div v-else-if="isSearching">
+                        <div v-for="(r, i) in searchResults" :key="i"
+                            @click="goToSearchResult(r)"
+                            class="file-card group flex items-center gap-3 md:gap-4 p-3 md:p-4 rounded-2xl cursor-pointer transition-all mb-2">
+                            <span class="text-2xl md:text-3xl shrink-0">
+                                {{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}
+                            </span>
+                            <div class="flex flex-col min-w-0 flex-1">
+                                <span class="text-slate-700 font-bold truncate text-sm md:text-base block">
+                                    {{ r.node.name }}
+                                </span>
+                                <span class="text-[10px] text-sky-400 truncate" :title="resultPath(r.trail)">
+                                    📂 {{ resultPath(r.trail) }}
+                                </span>
+                            </div>
+                        </div>
+                        <div v-if="searchResults.length === 0" class="text-center py-32 opacity-20">
+                            <p class="text-6xl mb-4">∅</p>
+                            <p>没找到匹配的东西</p>
+                        </div>
                     </div>
 
                     <div v-else>

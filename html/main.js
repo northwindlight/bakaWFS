@@ -17,6 +17,7 @@ createApp({
         const currentDir = ref(null);
         const pathStack = ref([]);
         const loading = ref(false);
+        const searchQuery = ref('');
         const showLogin = ref(false);
         const showRemoteModal = ref(false);
         const showProgressModal = ref(false);
@@ -305,6 +306,53 @@ createApp({
                 openFileViewer(item);
             }
         };
+
+        // ── 搜索 ─────────────────────────────────────
+        // 纯前端：rootData 已是整棵目录树（ScanDir 递归返回），搜索在内存里
+        // 递归遍历，不触后端、不破“文件系统即唯一状态”。
+        const isSearching = computed(() => searchQuery.value.trim() !== '');
+
+        // 递归收集名字命中的节点，每个结果带 trail（从根的直接子节点到该节点父级的祖先链），
+        // 供点击后重建 pathStack 跳转。trail 不含 rootData 自身，含目标的各级父目录节点。
+        const searchResults = computed(() => {
+            const q = searchQuery.value.trim().toLowerCase();
+            if (!q || !rootData.value) return [];
+            const out = [];
+            const walk = (node, trail) => {
+                for (const child of node.children || []) {
+                    if (child.name.toLowerCase().includes(q)) {
+                        out.push({ node: child, trail });
+                    }
+                    if (child.type === 'dir' && child.children) {
+                        walk(child, [...trail, child]);
+                    }
+                }
+            };
+            walk(rootData.value, []);
+            return out;
+        });
+
+        // 命中项所在目录的展示路径（面包屑文字），根目录显示为 “/”。
+        const resultPath = (trail) => {
+            if (!trail.length) return '/';
+            return '/' + trail.map(n => n.name).join('/');
+        };
+
+        // 点击搜索结果：用 trail 重建导航栈，跳到该项所在目录；文件则在父目录里打开查看器。
+        const goToSearchResult = (result) => {
+            const { node, trail } = result;
+            pathStack.value = [...trail];
+            currentDir.value = trail.length ? trail[trail.length - 1] : rootData.value;
+            searchQuery.value = '';
+            if (node.type === 'dir') {
+                pathStack.value.push(node);
+                currentDir.value = node;
+            } else {
+                openFileViewer(node);
+            }
+        };
+
+        const clearSearch = () => { searchQuery.value = ''; };
 
         // ── 文件查看器逻辑 ───────────────────────
         const viewer = ref({ show: false, type: null });
@@ -757,6 +805,7 @@ createApp({
         return {
             i18n,
             loading, isLoggedIn, currentUser, currentRole, isAdmin, showLogin, loginForm, authMode, pathStack, sortedFiles,
+            searchQuery, isSearching, searchResults, resultPath, goToSearchResult, clearSearch,
             handleLogin, handleLogout, handleFileUpload, handleItemClick,
             goHome, goToLevel, formatSize, getFileUrl, downloadFile,
             showRemoteModal, showProgressModal, showUploadMenu, remoteUrl, progressData,
