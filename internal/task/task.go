@@ -174,7 +174,7 @@ func (d *Downloader) execute(ctx context.Context, task DownloadTask) {
 		return
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := safeDownloadClient.Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			d.logger.Info("远程下载被取消", "file", task.Filename)

@@ -1,6 +1,7 @@
 package fileops
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -130,11 +131,21 @@ func (q *Queue) audit(username, action, path, finalPath string) {
 	if q.logf == nil {
 		return
 	}
-	entry := fmt.Sprintf(`{"time":"%s","user":"%s","action":"%s","path":"%s"`,
-		time.Now().Format(time.RFC3339), username, action, path)
-	if finalPath != "" {
-		entry += fmt.Sprintf(`,"final":"%s"`, finalPath)
+	// 用 json.Marshal 而非手工拼接：username/path 来自用户输入（文件名可含引号、
+	// 反斜杠、换行），手拼会导致审计日志 JSON 损坏甚至被注入伪造条目。转义交给标准库。
+	entry := map[string]string{
+		"time":   time.Now().Format(time.RFC3339),
+		"user":   username,
+		"action": action,
+		"path":   path,
 	}
-	entry += "}\n"
-	q.logf.WriteString(entry)
+	if finalPath != "" {
+		entry["final"] = finalPath
+	}
+	b, err := json.Marshal(entry)
+	if err != nil {
+		q.logger.Warn("审计日志序列化失败", "error", err)
+		return
+	}
+	q.logf.Write(append(b, '\n'))
 }

@@ -162,6 +162,14 @@ func (h *FileHandler) HandleRemoteUpload(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// SSRF 防护：入队前先校验 URL（协议白名单 + 拒绝内网/环回/元数据地址）。
+	// 重定向的逐跳校验在 downloader 侧的 safeDownloadClient 里。
+	if err := task.ValidateRemoteURL(req.URL); err != nil {
+		http.Error(w, "Bad Request: "+err.Error(), http.StatusBadRequest)
+		h.logger.Warn("远程下载: URL 校验失败", "url", req.URL, "user", username, "error", err)
+		return
+	}
+
 	targetPath := filepath.Join(h.cfg.DirPath, req.Filename)
 
 	dt := task.DownloadTask{
