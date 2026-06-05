@@ -64,15 +64,47 @@ func TestConfigHtmlEnabled(t *testing.T) {
 func TestEnsureUsersConfig(t *testing.T) {
 	dir := t.TempDir()
 	usersPath := filepath.Join(dir, "users.yaml")
-	if err := config.EnsureUsersConfig(usersPath); err != nil {
+	adminPw, err := config.EnsureUsersConfig(usersPath)
+	if err != nil {
 		t.Fatalf("EnsureUsersConfig: %v", err)
+	}
+	if adminPw == "" || strings.Contains(adminPw, "%%") {
+		t.Errorf("admin password should be randomly generated, got %q", adminPw)
 	}
 	cfg, err := config.LoadYAML[config.UsersConfig](usersPath)
 	if err != nil {
 		t.Fatalf("LoadYAML: %v", err)
 	}
-	if len(cfg.Users) != 1 || cfg.Users[0].Username != "baka" {
-		t.Error("unexpected default users config")
+	var baka, admin *config.User
+	for i := range cfg.Users {
+		switch cfg.Users[i].Username {
+		case "baka":
+			baka = &cfg.Users[i]
+		case "admin":
+			admin = &cfg.Users[i]
+		}
+	}
+	if baka == nil || baka.Role != "guest" {
+		t.Error("expected baka with role guest")
+	}
+	if admin == nil || admin.Role != "admin" {
+		t.Error("expected admin with role admin")
+	}
+	if admin != nil && admin.Password != adminPw {
+		t.Errorf("admin password in file (%q) should match returned (%q)", admin.Password, adminPw)
+	}
+	// 占位符必须已被替换
+	if admin != nil && strings.Contains(admin.Password, "%%") {
+		t.Error("admin password placeholder not replaced")
+	}
+
+	// 文件已存在时应跳过、返回空串
+	pw2, err := config.EnsureUsersConfig(usersPath)
+	if err != nil {
+		t.Fatalf("EnsureUsersConfig (existing): %v", err)
+	}
+	if pw2 != "" {
+		t.Errorf("expected empty password when file exists, got %q", pw2)
 	}
 }
 

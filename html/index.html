@@ -308,14 +308,14 @@
                         </span>
                     </div>
 
-                    <!-- 新建文件夹 -->
-                    <button @click="openMkdirModal"
+                    <!-- 新建文件夹（仅 admin） -->
+                    <button v-if="isAdmin" @click="openMkdirModal"
                             class="shrink-0 flex items-center gap-1.5 bg-sky-100/50 text-sky-600 px-3 py-2 rounded-xl text-sm font-bold hover:bg-sky-200 active:scale-95 transition select-none border-2 border-sky-200">
                         📁+
                     </button>
 
-                    <!-- 上传 下拉按钮 -->
-                    <div class="relative shrink-0">
+                    <!-- 上传 下拉按钮（仅 admin） -->
+                    <div v-if="isAdmin" class="relative shrink-0">
                         <button @click="showUploadMenu = !showUploadMenu"
                                 class="flex items-center gap-1.5 bg-sky-500 text-white px-3 py-2 rounded-xl text-sm font-bold shadow-lg shadow-sky-200 hover:bg-sky-600 active:scale-95 transition select-none">
                             <span>⬆ 上传</span>
@@ -635,8 +635,8 @@
                             </div>
 
                             <div class="flex gap-2 items-center shrink-0 ml-2">
-                                <!-- 操作按钮 -->
-                                <div class="relative">
+                                <!-- 操作按钮（写操作，仅 admin 可见） -->
+                                <div v-if="isAdmin" class="relative">
                                     <button @click.stop.prevent="toggleOpsPanel(item)"
                                             @mousedown.stop.prevent
                                             class="js-ops-btn ops-btn px-3 py-1.5 text-sm flex items-center gap-1 whitespace-nowrap select-none">

@@ -13,7 +13,8 @@ func newTestAuth() *auth.Auth {
 	cfg := config.Config{Secret: "test-secret"}
 	users := config.UsersConfig{
 		Users: []config.User{
-			{Username: "baka", Password: "bakabaka"},
+			{Username: "baka", Password: "bakabaka", Role: "guest"},
+			{Username: "admin", Password: "adminpass", Role: "admin"},
 		},
 	}
 	return auth.NewAuth(cfg, users)
@@ -21,18 +22,21 @@ func newTestAuth() *auth.Auth {
 
 func TestLoginSuccess(t *testing.T) {
 	a := newTestAuth()
-	token, err := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "test-ua")
+	token, role, err := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "test-ua")
 	if err != nil {
 		t.Fatalf("login failed: %v", err)
 	}
 	if token == "" {
 		t.Error("token should not be empty")
 	}
+	if role != "guest" {
+		t.Errorf("expected role guest, got %s", role)
+	}
 }
 
 func TestLoginWrongPassword(t *testing.T) {
 	a := newTestAuth()
-	_, err := a.Login(config.User{Username: "baka", Password: "wrong"}, "test-ua")
+	_, _, err := a.Login(config.User{Username: "baka", Password: "wrong"}, "test-ua")
 	if err == nil {
 		t.Error("expected error for wrong password")
 	}
@@ -40,7 +44,7 @@ func TestLoginWrongPassword(t *testing.T) {
 
 func TestLoginUnknownUser(t *testing.T) {
 	a := newTestAuth()
-	_, err := a.Login(config.User{Username: "nobody", Password: "x"}, "test-ua")
+	_, _, err := a.Login(config.User{Username: "nobody", Password: "x"}, "test-ua")
 	if err == nil {
 		t.Error("expected error for unknown user")
 	}
@@ -48,22 +52,38 @@ func TestLoginUnknownUser(t *testing.T) {
 
 func TestVerifyToken(t *testing.T) {
 	a := newTestAuth()
-	token, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "mozilla")
+	token, _, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "mozilla")
 
-	username, err := a.VerifyToken(token, "mozilla")
+	username, role, err := a.VerifyToken(token, "mozilla")
 	if err != nil {
 		t.Fatalf("verify failed: %v", err)
 	}
 	if username != "baka" {
 		t.Errorf("expected baka, got %s", username)
 	}
+	if role != "guest" {
+		t.Errorf("expected guest, got %s", role)
+	}
+}
+
+func TestVerifyTokenAdminRole(t *testing.T) {
+	a := newTestAuth()
+	token, _, _ := a.Login(config.User{Username: "admin", Password: "adminpass"}, "mozilla")
+
+	_, role, err := a.VerifyToken(token, "mozilla")
+	if err != nil {
+		t.Fatalf("verify failed: %v", err)
+	}
+	if role != "admin" {
+		t.Errorf("expected admin, got %s", role)
+	}
 }
 
 func TestVerifyTokenWrongUA(t *testing.T) {
 	a := newTestAuth()
-	token, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "mozilla")
+	token, _, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "mozilla")
 
-	_, err := a.VerifyToken(token, "chrome")
+	_, _, err := a.VerifyToken(token, "chrome")
 	if err == nil {
 		t.Error("expected error for UA mismatch")
 	}
@@ -71,7 +91,7 @@ func TestVerifyTokenWrongUA(t *testing.T) {
 
 func TestVerifyTokenGarbage(t *testing.T) {
 	a := newTestAuth()
-	_, err := a.VerifyToken("not.a.valid.token", "ua")
+	_, _, err := a.VerifyToken("not.a.valid.token", "ua")
 	if err == nil {
 		t.Error("expected error for invalid token")
 	}
@@ -79,7 +99,7 @@ func TestVerifyTokenGarbage(t *testing.T) {
 
 func TestRefreshToken(t *testing.T) {
 	a := newTestAuth()
-	token, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "ua")
+	token, _, _ := a.Login(config.User{Username: "baka", Password: "bakabaka"}, "ua")
 
 	newToken, err := a.RefreshToken(token)
 	if err != nil {
@@ -89,13 +109,16 @@ func TestRefreshToken(t *testing.T) {
 		t.Error("refreshed token should not be empty")
 	}
 
-	// 新 token 应仍能通过验证
-	username, err := a.VerifyToken(newToken, "ua")
+	// 新 token 应仍能通过验证，role 应被透传
+	username, role, err := a.VerifyToken(newToken, "ua")
 	if err != nil {
 		t.Fatalf("verify after refresh: %v", err)
 	}
 	if username != "baka" {
 		t.Errorf("expected baka, got %s", username)
+	}
+	if role != "guest" {
+		t.Errorf("expected role guest preserved, got %s", role)
 	}
 }
 
@@ -114,6 +137,7 @@ func TestRefreshTokenMalformedClaims(t *testing.T) {
 			claims: jwt.MapClaims{
 				"username": "baka",
 				"ua":       "ua",
+				"role":     "guest",
 				"exp":      time.Now().Add(time.Hour).Unix(),
 				"iat":      time.Now().Unix(),
 			},
@@ -123,6 +147,7 @@ func TestRefreshTokenMalformedClaims(t *testing.T) {
 			claims: jwt.MapClaims{
 				"username": "baka",
 				"ua":       "ua",
+				"role":     "guest",
 				"exp":      time.Now().Add(time.Hour).Unix(),
 				"iat":      time.Now().Unix(),
 				"abs_exp":  "not-a-number",
@@ -132,6 +157,17 @@ func TestRefreshTokenMalformedClaims(t *testing.T) {
 			name: "username_wrong_type",
 			claims: jwt.MapClaims{
 				"username": 12345,
+				"ua":       "ua",
+				"role":     "guest",
+				"exp":      time.Now().Add(time.Hour).Unix(),
+				"iat":      time.Now().Unix(),
+				"abs_exp":  time.Now().Add(7 * 24 * time.Hour).Unix(),
+			},
+		},
+		{
+			name: "missing_role",
+			claims: jwt.MapClaims{
+				"username": "baka",
 				"ua":       "ua",
 				"exp":      time.Now().Add(time.Hour).Unix(),
 				"iat":      time.Now().Unix(),

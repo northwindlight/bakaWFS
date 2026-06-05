@@ -11,6 +11,7 @@ import (
 type jwtClaims struct {
 	Username string `json:"username"`
 	Token    string `json:"token"`
+	Role     string `json:"role"`
 }
 
 type AuthHandler struct {
@@ -40,14 +41,14 @@ func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Bad Request", http.StatusBadRequest)
 		return
 	}
-	token, err := h.auth.Login(creds, r.Header.Get("User-Agent"))
+	token, role, err := h.auth.Login(creds, r.Header.Get("User-Agent"))
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		h.logger.Warn("用户登录失败", "username", creds.Username)
 		return
 	}
-	json.NewEncoder(w).Encode(jwtClaims{Username: creds.Username, Token: token})
-	h.logger.Info("用户登录成功", "username", creds.Username)
+	json.NewEncoder(w).Encode(jwtClaims{Username: creds.Username, Token: token, Role: role})
+	h.logger.Info("用户登录成功", "username", creds.Username, "role", role)
 }
 
 func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +58,7 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	username, _ := r.Context().Value(ContextKeyUsername).(string)
+	role, _ := r.Context().Value(ContextKeyRole).(string)
 	token, _ := r.Context().Value(ContextKeyToken).(string)
 	newToken, err := h.auth.RefreshToken(token)
 	if err != nil {
@@ -64,6 +66,6 @@ func (h *AuthHandler) HandleVerify(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("token 续签失败", "error", err)
 		return
 	}
-	json.NewEncoder(w).Encode(jwtClaims{Username: username, Token: newToken})
+	json.NewEncoder(w).Encode(jwtClaims{Username: username, Token: newToken, Role: role})
 	h.logger.Info("token 续签成功", "username", username)
 }
