@@ -38,7 +38,43 @@ func NewFileHandler(cfg config.Config, logger *slog.Logger, downloader *task.Dow
 	}
 }
 
+// browseDepth 浏览端点展开层数：当前层 + 预拉下一层。
+const browseDepth = 2
+
+// HandleNode 处理 /list?path=<相对路径>，浅扫描该目录（当前层 + 预拉一层），
+// 供前端懒加载浏览。path 为空即根目录。整树搜索走 /tree（HandleTree）。
 func (h *FileHandler) HandleNode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	target := h.cfg.DirPath
+	if rel != "" {
+		if err := fileutil.ValidatePath(rel); err != nil {
+			http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+			return
+		}
+		target = filepath.Join(h.cfg.DirPath, rel)
+	}
+	node, err := fileutil.ScanDirDepth(target, browseDepth)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Not Found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.logger.Error("浅扫描目录失败", "error", err, "path", target)
+		return
+	}
+	if err := json.NewEncoder(w).Encode(node); err != nil {
+		h.logger.Error("JSON编码失败", "error", err)
+	}
+}
+
+// HandleTree 处理 /tree，返回整棵目录树（递归到 maxScanDepth）。供前端搜索一次性加载。
+func (h *FileHandler) HandleTree(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -47,7 +83,7 @@ func (h *FileHandler) HandleNode(w http.ResponseWriter, r *http.Request) {
 	rootNode, err := fileutil.ScanDir(h.cfg.DirPath)
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-		h.logger.Error("扫描目录失败", "error", err, "path", h.cfg.DirPath)
+		h.logger.Error("扫描整树失败", "error", err, "path", h.cfg.DirPath)
 		return
 	}
 	if err := json.NewEncoder(w).Encode(rootNode); err != nil {

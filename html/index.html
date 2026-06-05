@@ -308,6 +308,14 @@
                         </span>
                     </div>
 
+                    <!-- 搜索框（整库搜，融入漫画站风格） -->
+                    <div class="relative shrink-0 w-32 sm:w-44">
+                        <input v-model="searchQuery" type="text" placeholder="🔍 搜全库..."
+                               class="w-full pl-3 pr-7 py-2 rounded-xl border-none ring-2 ring-sky-100 focus:ring-sky-400 outline-none text-xs bg-white/60 text-sky-700 placeholder:text-sky-300 transition">
+                        <button v-if="searchQuery" @click="clearSearch"
+                                class="absolute right-1.5 top-1/2 -translate-y-1/2 text-sky-300 hover:text-sky-600 text-sm leading-none">×</button>
+                    </div>
+
                     <!-- 新建文件夹（仅 admin） -->
                     <button v-if="isAdmin" @click="openMkdirModal"
                             class="shrink-0 flex items-center gap-1.5 bg-sky-100/50 text-sky-600 px-3 py-2 rounded-xl text-sm font-bold hover:bg-sky-200 active:scale-95 transition select-none border-2 border-sky-200">
@@ -526,7 +534,31 @@
                 </teleport>
 
                 <div class="flex-1 p-2 overflow-y-auto">
-                    <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-sky-400">
+                    <!-- ── 搜索结果（整库搜，优先于一切浏览视图）── -->
+                    <div v-if="isSearching" class="p-1">
+                        <div v-if="searchTreeLoading" class="flex flex-col items-center justify-center py-20 text-sky-400">
+                            <div class="text-4xl animate-bounce">🧊</div>
+                            <p class="mt-4">琪露诺正在翻遍整个书库...</p>
+                        </div>
+                        <div v-else>
+                            <p class="text-xs text-sky-400 px-2 mb-2">找到 {{ searchResults.length }} 个结果<span v-if="searchResults.length >= 200">（只显示前 200 个，缩小关键词试试）</span></p>
+                            <div v-for="(r, i) in searchResults" :key="i"
+                                 @click="goToSearchResult(r)"
+                                 class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-sky-50 cursor-pointer transition border-b border-sky-50/60">
+                                <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-sm text-sky-800 font-bold truncate">{{ r.node.name }}</div>
+                                    <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.trail) }}</div>
+                                </div>
+                            </div>
+                            <div v-if="searchResults.length === 0" class="text-center py-24 text-sky-300">
+                                <p class="text-4xl mb-2">🫧</p>
+                                <p>什么都没找到呢</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-else-if="loading" class="flex flex-col items-center justify-center py-20 text-sky-400">
                         <div class="text-4xl animate-bounce">🧊</div>
                         <p class="mt-4">琪露诺正在数数...</p>
                     </div>

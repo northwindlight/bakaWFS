@@ -13,11 +13,19 @@ import {
 createApp({
     setup() {
         const API_BASE = '';
-        const rootData = ref(null);
-        const currentDir = ref(null);
-        const pathStack = ref([]);
+        const currentDir = ref(null);      // 当前层节点（/list?path= 浅扫 depth2 的结果）
+        const pathStack = ref([]);         // 各层 { name }，供面包屑/拼路径（懒加载下只存名字）
         const loading = ref(false);
         const currentSeries = ref(null);   // 连载话列表视图（非 null 时显示话列表而非海报网格）
+
+        // ── 搜索（整树一次性拉 /tree，仅搜索时）───────────────
+        const searchQuery = ref('');
+        const isSearching = computed(() => searchQuery.value.trim().length > 0);
+        const searchTree = ref(null);       // /tree 整树缓存
+        const searchTreeLoading = ref(false);
+        // 搜索跳转到漫画本/文件后，待本层加载完再打开（见 loadLevel）
+        const pendingOpenFile = ref(null);  // 打开指定文件名
+        const pendingOpenBook = ref(false); // 打开本层漫画本第一页
         const showLogin = ref(false);
         const showRemoteModal = ref(false);
         const showProgressModal = ref(false);
@@ -102,7 +110,7 @@ createApp({
                 currentRole.value = data.role || '';
                 showLogin.value = false;
                 loginForm.value = { username: '', password: '' };
-                if (!rootData.value) fetchData();
+                if (!currentDir.value) loadLevel(parseHash());
             } catch (e) {
                 alert(i18n.errorPrefix + e.message);
             }
@@ -131,37 +139,154 @@ createApp({
             }
         };
 
-        const fetchData = async () => {
+        // ── 非全量树：懒加载浏览（/list?path= 浅扫 depth2）+ hash 路由 ───────
+        // 浏览只拉当前层；整树只在搜索时向 /tree 拉一次。漫画语义全在前端从 Node 树推导。
+
+        const authHeaders = () => {
+            const token = localStorage.getItem('baka_token');
+            return token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+        };
+
+        // 当前 hash → 路径段数组（已解码）。空 hash = 根。
+        const parseHash = () => {
+            let h = location.hash || '';
+            if (h.startsWith('#')) h = h.slice(1);
+            if (h.startsWith('/')) h = h.slice(1);
+            if (!h) return [];
+            return h.split('/').filter(Boolean).map(s => {
+                try { return decodeURIComponent(s); } catch (_) { return s; }
+            });
+        };
+
+        // 路径段数组 → hash 字符串。
+        const buildHash = (names) => '#/' + names.map(encodeURIComponent).join('/');
+
+        // 设置 hash（触发 hashchange 进而加载）。与当前 hash 相同则直接重载本层。
+        const navigateTo = (names) => {
+            const target = buildHash(names);
+            if (location.hash === target) {
+                loadLevel(names);
+            } else {
+                location.hash = target;
+            }
+        };
+
+        // 向 /list?path= 拉指定层（深度2），刷新 currentDir + pathStack。
+        const loadLevel = async (names) => {
             loading.value = true;
             try {
                 if (isLoggedIn.value) {
                     const tokenValid = await verifyToken();
                     if (!tokenValid) { loading.value = false; return; }
                 }
-                const token = localStorage.getItem('baka_token');
-                const listOpts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
-                const res = await fetchWithRetry(`${API_BASE}/list`, listOpts, 3, 500);
+                const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
+                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
                 const data = await res.json();
-                rootData.value = data;
-                // 恢复当前路径
-                if (pathStack.value.length === 0) {
-                    currentDir.value = data;
-                } else {
-                    let node = data;
-                    const names = pathStack.value.map(p => p.name);
-                    for (const name of names) {
-                        const child = node.children?.find(c => c.name === name && c.type === 'dir');
-                        if (child) { node = child; } else { node = data; break; }
+                currentSeries.value = null;     // 切层退出连载话列表视图
+                currentDir.value = data;
+                // pathStack 用名字段重建（懒加载下节点只需 name 供面包屑/拼路径）
+                pathStack.value = names.map(n => ({ name: n }));
+                // 进入漫画本：本层即该本，加载完打开第一页（封面图）
+                if (pendingOpenBook.value) {
+                    pendingOpenBook.value = false;
+                    const cover = bookCover(data);
+                    if (cover) {
+                        nextTick(() => {
+                            const first = sortedFiles.value.find(f => f.name === cover);
+                            if (first) openFileViewer(first);
+                        });
                     }
-                    currentDir.value = node;
+                }
+                // 搜索跳转到具体文件：本层加载完打开该文件查看器
+                if (pendingOpenFile.value) {
+                    const fname = pendingOpenFile.value;
+                    pendingOpenFile.value = null;
+                    nextTick(() => {
+                        const f = (data.children || []).find(c => c.name === fname && c.type === 'file');
+                        if (f) openFileViewer(f);
+                    });
                 }
             } catch (e) {
                 console.error(e);
+                // 路径失效（被删/改名）→ 回根
+                if (names.length) { navigateTo([]); return; }
                 alert(i18n.loadFailed);
             } finally {
                 loading.value = false;
             }
         };
+
+        // hashchange 入口：按当前 hash 加载对应层。
+        const onHashChange = () => { loadLevel(parseHash()); };
+
+        // 刷新当前层（路径不变）。
+        const refreshCurrent = () => loadLevel(parseHash());
+
+        // 写操作后：刷新当前层，并让搜索整树缓存失效（下次搜索重新拉）。
+        const refreshAfterWrite = () => {
+            searchTree.value = null;
+            return loadLevel(parseHash());
+        };
+
+        // ── 搜索：拉整树 → 在树上匹配名字 → 跳转 ───────────────
+        const loadSearchTree = async () => {
+            if (searchTree.value || searchTreeLoading.value) return;
+            searchTreeLoading.value = true;
+            try {
+                if (isLoggedIn.value) {
+                    const ok = await verifyToken();
+                    if (!ok) { searchTreeLoading.value = false; return; }
+                }
+                const res = await fetchWithRetry(`${API_BASE}/tree`, authHeaders(), 3, 500);
+                searchTree.value = await res.json();
+            } catch (e) {
+                console.error('加载搜索树失败', e);
+            } finally {
+                searchTreeLoading.value = false;
+            }
+        };
+
+        // 在整树上找名字含 query 的节点，返回 { node, trail }（trail 为祖先名字数组，不含自身）。
+        const searchResults = computed(() => {
+            const q = searchQuery.value.trim().toLowerCase();
+            if (!q || !searchTree.value) return [];
+            const out = [];
+            const walk = (node, trail) => {
+                for (const c of (node.children || [])) {
+                    if (c.name.startsWith('.')) continue;   // 隐藏元数据不参与搜索
+                    if (c.name.toLowerCase().includes(q)) {
+                        out.push({ node: c, trail });
+                        if (out.length >= 200) return;
+                    }
+                    if (c.type === 'dir') walk(c, [...trail, c.name]);
+                    if (out.length >= 200) return;
+                }
+            };
+            walk(searchTree.value, []);
+            return out;
+        });
+
+        // 搜索结果的展示路径
+        const resultPath = (trail) => '/' + trail.join('/');
+
+        // 点击搜索结果：目录则进入该目录；文件则进入其父目录并打开。
+        const goToSearchResult = (result) => {
+            const { node, trail } = result;
+            clearSearch();
+            if (node.type === 'dir') {
+                // 漫画本：进入后看第一页；普通目录：进入浏览
+                if (isMangaBook(node)) pendingOpenBook.value = true;
+                navigateTo([...trail, node.name]);
+            } else {
+                pendingOpenFile.value = node.name;
+                navigateTo(trail);
+            }
+        };
+
+        const clearSearch = () => { searchQuery.value = ''; };
+
+        // 开始搜索时确保整树已加载
+        watch(isSearching, (on) => { if (on) loadSearchTree(); });
 
         // ── 统一上传入口 ───────────────────────
         const handleFileUpload = async (event) => {
@@ -195,7 +320,7 @@ createApp({
                 };
                 try {
                     await doDirectUpload({ file, fullPath, taskId, token, API_BASE, progressData, uploadTasks, i18n });
-                    fetchData();
+                    refreshAfterWrite();
                 } catch (e) {
                     alert(i18n.uploadFailed + e.message);
                 } finally {
@@ -229,7 +354,7 @@ createApp({
                         file, fullPath, taskId, total, chunkSize, token, 
                         API_BASE, progressData, controller
                     });
-                    fetchData();
+                    refreshAfterWrite();
                 } catch (e) {
                     if (!controller.signal.aborted) {
                         console.error('分片上传错误:', e);
@@ -244,13 +369,13 @@ createApp({
         };
 
         const getFileUrl = (fileName) => {
-            if (!rootData.value) return '#';
+            if (!currentDir.value) return '#';
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
             return `${API_BASE}/files/${pathParts.join('/')}`;
         };
 
         const getThumbUrl = (fileName) => {
-            if (!rootData.value) return '';
+            if (!currentDir.value) return '';
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
             return `${API_BASE}/thumb/${pathParts.map(encodeURIComponent).join('/')}`;
         };
@@ -640,50 +765,29 @@ createApp({
 
         watch(currentDir, (dir) => { loadThumbnails(dir); loadCovers(dir); loadBookMetas(dir); });
 
+        // 导航全部走 hash（改 location.hash → hashchange → loadLevel）。
         const goToLevel = (index) => {
-            pathStack.value = pathStack.value.slice(0, index + 1);
-            currentDir.value = pathStack.value[pathStack.value.length - 1];
+            navigateTo(pathStack.value.slice(0, index + 1).map(p => p.name));
         };
 
-        const goHome = () => {
-            pathStack.value = [];
-            currentDir.value = rootData.value;
-        };
+        const goHome = () => { navigateTo([]); };
 
         // ── 连载系列视图 ───────────────────────
         const openSeries = (series) => { currentSeries.value = series; };
         const closeSeries = () => { currentSeries.value = null; };
+        // 进入连载某一话：话目录是当前层的直接子目录，跳到该话路径并打开第一页。
         const openChapter = (chapterNode) => {
-            pathStack.value.push(chapterNode);
-            currentDir.value = chapterNode;
-            closeSeries();   // 回到目录树，进阅读器
-            const cover = bookCover(chapterNode);
-            if (cover) {
-                nextTick(() => {
-                    const first = sortedFiles.value.find(f => f.name === cover);
-                    if (first) openFileViewer(first);
-                });
-            }
+            pendingOpenBook.value = true;
+            navigateTo([...pathStack.value.map(p => p.name), chapterNode.name]);
         };
 
         const handleItemClick = (item) => {
             if (item.type === 'dir') {
                 // 漫画本：进入目录后直接翻页阅读（看第一页）
                 if (isMangaBook(item)) {
-                    pathStack.value.push(item);
-                    currentDir.value = item;
-                    const cover = bookCover(item);
-                    if (cover) {
-                        // 等 sortedFiles 跟着 currentDir 更新后再开阅读器
-                        nextTick(() => {
-                            const first = sortedFiles.value.find(f => f.name === cover);
-                            if (first) openFileViewer(first);
-                        });
-                    }
-                    return;
+                    pendingOpenBook.value = true;
                 }
-                pathStack.value.push(item);
-                currentDir.value = item;
+                navigateTo([...pathStack.value.map(p => p.name), item.name]);
             } else {
                 openFileViewer(item);
             }
@@ -795,8 +899,20 @@ createApp({
             preloadImages(list, idx);
         });
 
+        // 目标选择器（复制/移动用）也走懒加载：pickerCurrent 是当前层的已加载节点。
+        const pickerCurrent = ref(null);
+        const loadPickerLevel = async (names) => {
+            try {
+                const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
+                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
+                pickerCurrent.value = await res.json();
+                pickerStack.value = names.map(n => ({ name: n }));
+            } catch (e) {
+                console.error('选择器加载失败', e);
+            }
+        };
         const pickerDirs = computed(() => {
-            const dir = pickerStack.value.length === 0 ? rootData.value : pickerStack.value[pickerStack.value.length - 1];
+            const dir = pickerCurrent.value;
             if (!dir || !dir.children) return [];
             return dir.children.filter(c => c.type === 'dir').sort((a, b) => naturalCompare(a.name, b.name));
         });
@@ -1010,7 +1126,7 @@ createApp({
         };
 
         const initPicker = () => {
-            pickerStack.value = [...pathStack.value];
+            loadPickerLevel(pathStack.value.map(p => p.name));
         };
 
         const toggleOpsPanel = (item) => {
@@ -1066,12 +1182,12 @@ createApp({
         };
 
         const pickerEnter = (dir) => {
-            pickerStack.value.push(dir);
+            loadPickerLevel([...pickerStack.value.map(p => p.name), dir.name]);
         };
 
         const pickerGoToLevel = (index) => {
-            if (index < 0) { pickerStack.value = []; return; }
-            pickerStack.value = pickerStack.value.slice(0, index + 1);
+            if (index < 0) { loadPickerLevel([]); return; }
+            loadPickerLevel(pickerStack.value.slice(0, index + 1).map(p => p.name));
         };
 
         const getPickerPath = (name) => {
@@ -1095,7 +1211,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showRenameModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -1116,7 +1232,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showCopyModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -1135,7 +1251,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showDeleteConfirm.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
             }
@@ -1163,7 +1279,7 @@ createApp({
                 });
                 if (!res.ok) throw new Error(await res.text());
                 showMkdirModal.value = false;
-                fetchData();
+                refreshAfterWrite();
             } catch (e) {
                 alert(i18n.mkdirFailed + e.message);
             }
@@ -1184,11 +1300,13 @@ createApp({
             }
 
             if (isLoggedIn.value) await verifyToken();
-            fetchData();
+            window.addEventListener('hashchange', onHashChange);
+            loadLevel(parseHash());   // 按初始 hash 加载（支持直链/刷新到某目录）
             window.addEventListener('keydown', onViewerKeydown);
         });
 
         onUnmounted(() => {
+            window.removeEventListener('hashchange', onHashChange);
             window.removeEventListener('keydown', onViewerKeydown);
             stopPolling();
         });
@@ -1208,6 +1326,8 @@ createApp({
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
             thumbMap, isImageFile,
+            // 搜索
+            searchQuery, isSearching, searchTreeLoading, searchResults, resultPath, goToSearchResult, clearSearch,
             // 漫画版渲染
             isMangaBook, bookCover, bookPageCount, coverMap, currentIsBookGrid,
             currentIsGroupGrid, groupBooks, groupBookCount, bookMeta, bookTitle, aggregatedBooks, currentSeries, openSeries, closeSeries, openChapter,

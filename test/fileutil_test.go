@@ -169,6 +169,67 @@ func TestScanDir(t *testing.T) {
 	}
 }
 
+func TestScanDirDepth(t *testing.T) {
+	// 构造 root/L1/L2/L3，每层一个子目录 + 一个文件
+	root := t.TempDir()
+	l1 := filepath.Join(root, "L1")
+	l2 := filepath.Join(l1, "L2")
+	l3 := filepath.Join(l2, "L3")
+	os.MkdirAll(l3, 0755)
+	os.WriteFile(filepath.Join(l1, "f1.txt"), []byte("1"), 0644)
+	os.WriteFile(filepath.Join(l2, "f2.txt"), []byte("2"), 0644)
+	os.WriteFile(filepath.Join(l3, "f3.txt"), []byte("3"), 0644)
+
+	// 找指定名字的子节点
+	find := func(n *fileutil.Node, name string) *fileutil.Node {
+		for _, c := range n.Children {
+			if c.Name == name {
+				return c
+			}
+		}
+		return nil
+	}
+
+	// limit=1：只展开当前层，L1 是目录但不展开其内容
+	d1, err := fileutil.ScanDirDepth(root, 1)
+	if err != nil {
+		t.Fatalf("ScanDirDepth limit=1: %v", err)
+	}
+	l1n := find(d1, "L1")
+	if l1n == nil || l1n.Type != "dir" {
+		t.Fatalf("limit=1: L1 应为 dir 节点")
+	}
+	if len(l1n.Children) != 0 {
+		t.Errorf("limit=1: L1 不应展开内容，却有 %d 个 children", len(l1n.Children))
+	}
+
+	// limit=2：展开两层，L1 内容可见(L2 + f1.txt)，但 L2 不再展开
+	d2, err := fileutil.ScanDirDepth(root, 2)
+	if err != nil {
+		t.Fatalf("ScanDirDepth limit=2: %v", err)
+	}
+	l1n = find(d2, "L1")
+	if l1n == nil || len(l1n.Children) != 2 {
+		t.Fatalf("limit=2: L1 应展开 2 个 children(L2+f1.txt)，得到 %v", l1n)
+	}
+	l2n := find(l1n, "L2")
+	if l2n == nil || l2n.Type != "dir" {
+		t.Fatalf("limit=2: 应见 L2 目录节点")
+	}
+	if len(l2n.Children) != 0 {
+		t.Errorf("limit=2: L2 不应展开(超出 limit)，却有 %d 个 children", len(l2n.Children))
+	}
+
+	// limit<1 归一为 1（防御性）
+	d0, err := fileutil.ScanDirDepth(root, 0)
+	if err != nil {
+		t.Fatalf("ScanDirDepth limit=0: %v", err)
+	}
+	if l := find(d0, "L1"); l == nil || len(l.Children) != 0 {
+		t.Errorf("limit=0 应等价 limit=1：L1 不展开")
+	}
+}
+
 // ScanDir 应跟随软链目录（os.Stat 语义），把它当普通目录遍历。
 func TestScanDirFollowsSymlinkDir(t *testing.T) {
 	dir := t.TempDir()
