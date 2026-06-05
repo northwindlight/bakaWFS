@@ -24,8 +24,9 @@ createApp({
         const searchTree = ref(null);       // /tree 整树缓存
         const searchTreeLoading = ref(false);
         // 搜索跳转到漫画本/文件后，待本层加载完再打开（见 loadLevel）
-        const pendingOpenFile = ref(null);  // 打开指定文件名
-        const pendingOpenBook = ref(false); // 打开本层漫画本第一页
+        const pendingOpenFile = ref(null);   // 打开指定文件名
+        const pendingOpenBook = ref(false);  // 打开本层漫画本第一页
+        const pendingOpenSeries = ref(null); // 在本层（汉化组层）展开指定连载的话列表
         const showLogin = ref(false);
         const showRemoteModal = ref(false);
         const showProgressModal = ref(false);
@@ -206,6 +207,15 @@ createApp({
                         if (f) openFileViewer(f);
                     });
                 }
+                // 搜索跳转到连载：本层（汉化组层）加载完展开该连载的话列表
+                if (pendingOpenSeries.value) {
+                    const sname = pendingOpenSeries.value;
+                    pendingOpenSeries.value = null;
+                    nextTick(() => {
+                        const s = aggregatedBooks.value.find(b => b.type === 'series' && b.name === sname);
+                        if (s) openSeries(s);
+                    });
+                }
             } catch (e) {
                 console.error(e);
                 // 路径失效（被删/改名）→ 回根
@@ -246,16 +256,33 @@ createApp({
             }
         };
 
-        // 在整树上找名字含 query 的节点，返回 { node, trail }（trail 为祖先名字数组，不含自身）。
+        // 在整树上找名字含 query 的节点，返回结果数组。
+        // - 普通命中：{ type:'node', node, trail }（trail 为祖先名字数组，不含自身）
+        // - 连载聚合命中：{ type:'series', name(聚合名), groupTrail(汉化组路径), coverNode }
+        //   连载聚合名只存在于话目录里的 .series-<名> 标记，整树上没有对应节点，
+        //   故单独索引：遇带 series 标记的话目录，按「汉化组路径+聚合名」去重产一条。
         const searchResults = computed(() => {
             const q = searchQuery.value.trim().toLowerCase();
             if (!q || !searchTree.value) return [];
             const out = [];
+            const seenSeries = new Set();   // 「groupTrail\0聚合名」去重
             const walk = (node, trail) => {
                 for (const c of (node.children || [])) {
                     if (c.name.startsWith('.')) continue;   // 隐藏元数据不参与搜索
+                    // 连载话目录：把聚合名也纳入匹配（命中跳到汉化组层并展开该连载）
+                    if (c.type === 'dir') {
+                        const mark = seriesMarkFile(c);
+                        if (mark && mark.toLowerCase().includes(q)) {
+                            const key = trail.join('/') + '\0' + mark;
+                            if (!seenSeries.has(key)) {
+                                seenSeries.add(key);
+                                out.push({ type: 'series', name: mark, groupTrail: trail, coverNode: c });
+                                if (out.length >= 200) return;
+                            }
+                        }
+                    }
                     if (c.name.toLowerCase().includes(q)) {
-                        out.push({ node: c, trail });
+                        out.push({ type: 'node', node: c, trail });
                         if (out.length >= 200) return;
                     }
                     if (c.type === 'dir') walk(c, [...trail, c.name]);
@@ -269,12 +296,19 @@ createApp({
         // 搜索结果的展示路径
         const resultPath = (trail) => '/' + trail.join('/');
 
-        // 点击搜索结果：目录则进入该目录；文件则进入其父目录并打开。
+        // 点击搜索结果：
+        // - 连载聚合：跳到汉化组层，加载完展开该连载的话列表（openSeries）
+        // - 目录：漫画本进阅读器，普通目录进入浏览
+        // - 文件：进入其父目录并打开
         const goToSearchResult = (result) => {
-            const { node, trail } = result;
             clearSearch();
+            if (result.type === 'series') {
+                pendingOpenSeries.value = result.name;
+                navigateTo(result.groupTrail);
+                return;
+            }
+            const { node, trail } = result;
             if (node.type === 'dir') {
-                // 漫画本：进入后看第一页；普通目录：进入浏览
                 if (isMangaBook(node)) pendingOpenBook.value = true;
                 navigateTo([...trail, node.name]);
             } else {

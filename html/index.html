@@ -542,14 +542,27 @@
                         </div>
                         <div v-else>
                             <p class="text-xs text-sky-400 px-2 mb-2">找到 {{ searchResults.length }} 个结果<span v-if="searchResults.length >= 200">（只显示前 200 个，缩小关键词试试）</span></p>
+                            <!-- 连载聚合结果 -->
                             <div v-for="(r, i) in searchResults" :key="i"
                                  @click="goToSearchResult(r)"
                                  class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-sky-50 cursor-pointer transition border-b border-sky-50/60">
-                                <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-sm text-sky-800 font-bold truncate">{{ r.node.name }}</div>
-                                    <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.trail) }}</div>
-                                </div>
+                                <template v-if="r.type === 'series'">
+                                    <span class="text-xl shrink-0">📚</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-sm text-sky-800 font-bold truncate">
+                                            {{ r.name }}
+                                            <span class="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-500 font-normal align-middle">连载</span>
+                                        </div>
+                                        <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.groupTrail) }}</div>
+                                    </div>
+                                </template>
+                                <template v-else>
+                                    <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
+                                    <div class="flex-1 min-w-0">
+                                        <div class="text-sm text-sky-800 font-bold truncate">{{ r.node.name }}</div>
+                                        <div class="text-[11px] text-sky-400 truncate">{{ resultPath(r.trail) }}</div>
+                                    </div>
+                                </template>
                             </div>
                             <div v-if="searchResults.length === 0" class="text-center py-24 text-sky-300">
                                 <p class="text-4xl mb-2">🫧</p>
