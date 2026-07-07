@@ -135,6 +135,12 @@ createApp({
         const fetchWithTimeout = (url, options = {}, timeout = FETCH_TIMEOUT) => {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), timeout);
+            // 调用方可自带 signal（如导航被后续操作取代要中断）——链到内部 controller 上。
+            const ext = options.signal;
+            if (ext) {
+                if (ext.aborted) controller.abort();
+                else ext.addEventListener('abort', () => controller.abort(), { once: true });
+            }
             return fetch(url, { ...options, signal: controller.signal })
                 .finally(() => clearTimeout(timer));
         };
@@ -147,6 +153,8 @@ createApp({
             } catch (err) {
                 // 鉴权失败重试也没用（token 不会自己变好）——直接抛给调用方去弹登录。
                 if (isAuthError(err)) throw err;
+                // 被上层取代/取消（导航换页）→ 别再重试，静默抛出让调用方按序号丢弃。
+                if (options.signal && options.signal.aborted) throw err;
                 if (retries > 0) {
                     console.warn(`Connection retry ${retries}`);
                     await new Promise(r => setTimeout(r, backoff));
@@ -209,14 +217,19 @@ createApp({
         // loadLevel 并发序号：弱网/快速翻页会有多个 loadLevel 同时在飞，
         // 只让「最后一次」导航的结果落地，丢弃过期请求，避免旧结果覆盖新页面 / loading 卡住。
         let _loadSeq = 0;
+        let _loadAbort = null;   // 上一个还在飞的导航请求，被新导航取代时中断它，别互相抢弱网带宽
 
         // 向 /list?path= 拉指定层（深度2），刷新 currentDir + pathStack。
         const loadLevel = async (names) => {
             const seq = ++_loadSeq;
+            if (_loadAbort) _loadAbort.abort();   // 取消上一次导航，避免请求堆积把新导航挤到超时
+            const ac = new AbortController();
+            _loadAbort = ac;
             loading.value = true;
             try {
                 const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
-                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
+                const opts = { ...authHeaders(), signal: ac.signal };
+                const res = await fetchWithRetry(`${API_BASE}/list${qs}`, opts, 3, 500);
                 const data = await res.json();
                 if (seq !== _loadSeq) return;   // 已被后续导航取代，丢弃这次结果
                 currentDir.value = data;
@@ -243,15 +256,24 @@ createApp({
                     });
                 }
             } catch (e) {
-                if (seq !== _loadSeq) return;   // 过期请求的失败不打扰用户
+                if (seq !== _loadSeq) return;   // 过期请求/被取代 的失败不打扰用户
                 // 鉴权失败：token 失效或需要登录 → 弹登录，别当成"找不到路"
                 if (isAuthError(e)) { handleAuthRequired(); return; }
                 console.error(e);
-                // 路径失效（被删/改名）→ 回根
-                if (names.length) { navigateTo([]); return; }
-                alert(i18n.loadFailed);
+                // 只有 404 才是「路径真没了」（被删/改名）；弱网超时/断网是 AbortError/TypeError，别混为一谈。
+                const status = e instanceof HttpError ? e.status : 0;
+                if (currentDir.value) {
+                    // 已有内容在显示：弱网瞬时失败别用弹窗打断、也别踹回根（会先加载出来又弹"找不到路"）。
+                    // 把地址栏还原到当前真实所在层，静默留在原地，用户可再点一次。
+                    const cur = buildHash(pathStack.value.map(p => p.name));
+                    if (location.hash !== cur) history.replaceState(null, '', cur);
+                } else if (status === 404 && names.length) {
+                    navigateTo([]);   // 冷启动深链到已失效路径 → 回根重来
+                } else {
+                    alert(i18n.loadFailed);   // 冷启动、啥都没有可显示，才提示
+                }
             } finally {
-                if (seq === _loadSeq) loading.value = false;
+                if (seq === _loadSeq) { loading.value = false; _loadAbort = null; }
             }
         };
 
