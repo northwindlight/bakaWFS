@@ -886,6 +886,16 @@ createApp({
             const midUrl  = `${getThumbUrl(name)}?size=mid`;
             const fullUrl = getFileUrl(name);
 
+            // 原图已在缓存（顺序翻页时被 preload 预取过，强网常态）→ 直接上原图、跳过中图，
+            // 消除"先糊一下再清晰"的无谓闪烁。中图占位只是弱网/首图/随机跳转的保底。
+            if (_imageBlobCache.has(fullUrl)) {
+                const fullBlob = _imageBlobCache.get(fullUrl);
+                await decodeThenSet(fullBlob);
+                if (seq === _viewerSeq) viewerCurrentImageUrl.value = fullBlob;
+                preloadImages(list, idx);
+                return;
+            }
+
             // 立即清空旧帧，避免旧 key 的 img 残留
             viewerCurrentImageUrl.value = '';
             // 中图先显示——等解码完再赋值，一设即出
