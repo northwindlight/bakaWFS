@@ -53,7 +53,7 @@ createApp({
             const token = localStorage.getItem('baka_token');
             if (!token) return false;
             try {
-                const res = await fetch(`${API_BASE}/verify`, {
+                const res = await fetchWithTimeout(`${API_BASE}/verify`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
@@ -115,12 +115,30 @@ createApp({
             alert(i18n.loggedOut);
         };
 
+        // HTTP 非 2xx 的错误类型：带上 status，供调用方区分「鉴权失败」与「网络/服务端错误」。
+        class HttpError extends Error {
+            constructor(status) { super(`Server status: ${status}`); this.status = status; }
+        }
+        const isAuthError = (e) => e instanceof HttpError && (e.status === 401 || e.status === 403);
+
+        // 带超时的 fetch：弱网下请求可能永久挂起（fetch 本身无超时），
+        // 用 AbortController 到点中断，让上层能重试/报错，而不是把页面卡死在 loading。
+        const FETCH_TIMEOUT = 15000;
+        const fetchWithTimeout = (url, options = {}, timeout = FETCH_TIMEOUT) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), timeout);
+            return fetch(url, { ...options, signal: controller.signal })
+                .finally(() => clearTimeout(timer));
+        };
+
         const fetchWithRetry = async (url, options = {}, retries = 3, backoff = 500) => {
             try {
-                const res = await fetch(url, options);
-                if (!res.ok) throw new Error(`Server status: ${res.status}`);
+                const res = await fetchWithTimeout(url, options);
+                if (!res.ok) throw new HttpError(res.status);
                 return res;
             } catch (err) {
+                // 鉴权失败重试也没用（token 不会自己变好）——直接抛给调用方去弹登录。
+                if (isAuthError(err)) throw err;
                 if (retries > 0) {
                     console.warn(`Connection retry ${retries}`);
                     await new Promise(r => setTimeout(r, backoff));
@@ -164,17 +182,37 @@ createApp({
             }
         };
 
+        // 需要登录（/list 返回 401/403）：清失效 token、切登录界面。
+        // 兼容 authMode 没探测成功的情形——服务器实际要鉴权就以服务器为准，纠正 authMode。
+        const handleAuthRequired = () => {
+            const wasLoggedIn = isLoggedIn.value;
+            if (wasLoggedIn) {
+                localStorage.removeItem('baka_token');
+                localStorage.removeItem('baka_user');
+                localStorage.removeItem('baka_role');
+                isLoggedIn.value = false;
+                currentUser.value = '';
+                currentRole.value = '';
+            }
+            authMode.value = true;      // 服务器要鉴权 → 纠正可能漏探测到的 authMode，露出登录框
+            currentDir.value = null;
+            showLogin.value = true;
+            if (wasLoggedIn) alert(i18n.tokenExpired);
+        };
+
+        // loadLevel 并发序号：弱网/快速翻页会有多个 loadLevel 同时在飞，
+        // 只让「最后一次」导航的结果落地，丢弃过期请求，避免旧结果覆盖新页面 / loading 卡住。
+        let _loadSeq = 0;
+
         // 向 /list?path= 拉指定层（深度2），刷新 currentDir + pathStack。
         const loadLevel = async (names) => {
+            const seq = ++_loadSeq;
             loading.value = true;
             try {
-                if (isLoggedIn.value) {
-                    const tokenValid = await verifyToken();
-                    if (!tokenValid) { loading.value = false; return; }
-                }
                 const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
                 const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
                 const data = await res.json();
+                if (seq !== _loadSeq) return;   // 已被后续导航取代，丢弃这次结果
                 currentDir.value = data;
                 // pathStack 用名字段重建（节点本身只需 name 供面包屑/跳转用）
                 pathStack.value = names.map(n => ({ name: n }));
@@ -186,12 +224,15 @@ createApp({
                     if (f) openFileViewer(f);
                 }
             } catch (e) {
+                if (seq !== _loadSeq) return;   // 过期请求的失败不打扰用户
+                // 鉴权失败：token 失效或需要登录 → 弹登录，别当成"找不到路"
+                if (isAuthError(e)) { handleAuthRequired(); return; }
                 console.error(e);
                 // 路径失效（被删/改名）→ 回根
                 if (names.length) { navigateTo([]); return; }
                 alert(i18n.loadFailed);
             } finally {
-                loading.value = false;
+                if (seq === _loadSeq) loading.value = false;
             }
         };
 
@@ -362,13 +403,10 @@ createApp({
             if (searchTree.value || searchTreeLoading.value) return;
             searchTreeLoading.value = true;
             try {
-                if (isLoggedIn.value) {
-                    const ok = await verifyToken();
-                    if (!ok) { searchTreeLoading.value = false; return; }
-                }
                 const res = await fetchWithRetry(`${API_BASE}/tree`, authHeaders(), 3, 500);
                 searchTree.value = await res.json();
             } catch (e) {
+                if (isAuthError(e)) { handleAuthRequired(); return; }
                 console.error('加载搜索整树失败', e);
             } finally {
                 searchTreeLoading.value = false;
@@ -854,13 +892,19 @@ createApp({
         };
 
         onMounted(async () => {
+            // 探测服务器鉴权模式。必须带重试：弱网下若静默失败，authMode 会误停在 false，
+            // 强制鉴权模式下登录框(v-if=authMode&&!isLoggedIn)就不出，卡在空的主界面。
             try {
-                const res = await fetch(`${API_BASE}/api/config`);
-                if (res.ok) {
-                    const data = await res.json();
-                    authMode.value = !!data.auth_mode;
-                }
-            } catch (_) {}
+                const res = await fetchWithRetry(`${API_BASE}/api/config`, {}, 3, 500);
+                authMode.value = !!(await res.json()).auth_mode;
+            } catch (_) {
+                // 配置都拉不到也不慌：下面 loadLevel 若撞 401 会由 handleAuthRequired 纠正 authMode。
+            }
+
+            // 导航监听无条件注册：鉴权模式登录后也要能翻目录，
+            // 否则 hash 变了却没人处理 hashchange → URL 改了页面不动。
+            window.addEventListener('hashchange', onHashChange);
+            window.addEventListener('keydown', onViewerKeydown);
 
             if (authMode.value && !isLoggedIn.value) {
                 showLogin.value = true;
@@ -868,9 +912,7 @@ createApp({
             }
 
             if (isLoggedIn.value) await verifyToken();
-            window.addEventListener('hashchange', onHashChange);
             loadLevel(parseHash());   // 按初始 hash 加载（支持直链/刷新到某目录）
-            window.addEventListener('keydown', onViewerKeydown);
         });
 
         onUnmounted(() => {
