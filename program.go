@@ -145,6 +145,13 @@ func main() {
 		}
 		fmt.Println("服务已停止")
 
+	case "restart":
+		if err := svc.Restart(); err != nil {
+			fmt.Fprintf(os.Stderr, "重启服务失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("服务已重启")
+
 	case "status":
 		st, err := svc.Status()
 		if err != nil {
@@ -189,7 +196,7 @@ func main() {
 
 	default:
 		fmt.Fprintf(os.Stderr, "未知命令: %s\n", cmd)
-		fmt.Fprintf(os.Stderr, "用法: bakaWFS [install|uninstall|start|stop|status|run]\n")
+		fmt.Fprintf(os.Stderr, "用法: bakaWFS [install|uninstall|start|stop|restart|status|run]\n")
 		os.Exit(1)
 	}
 }
