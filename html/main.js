@@ -326,6 +326,35 @@ createApp({
             return out;
         });
 
+        // 搜索结果分类：book=单本, series=连载作品, null=非漫画（单页文件/普通目录/汉化组目录）。
+        // 连载作品根有迁移时拷的封面（直接图片 child，同浏览侧 bookCover 约定）；而汉化组目录/书库根
+        // 只有子目录、没有根图——若直接套 isSeriesDir 会把它们误归为连载卡（无封面、徽标错标「N话」），
+        // 故用「有子目录且有根图」作为连载的判别，无根图的目录留给扁平列表。
+        const classifySearchResult = (r) => {
+            if (r.node.type !== 'dir') return null;
+            if (isMangaBook(r.node)) return 'book';
+            const ch = r.node.children || [];
+            if (!ch.some(c => c.type === 'file' && isImageFile(c.name))) return null;
+            return isSeriesDir(r.node) ? 'series' : null;
+        };
+
+        // 搜索命中的漫画（单本 + 连载作品）——上封面墙，与浏览侧 aggregatedBooks 一致。
+        // key = 完整相对路径（trail + name），搜索结果跨任意路径，裸名会跨组撞名。
+        // 非漫画命中（单页文件/普通目录/汉化组目录）留给扁平列表 searchFlat。
+        const searchPosters = computed(() => {
+            const out = [];
+            for (const r of searchResults.value) {
+                const type = classifySearchResult(r);
+                if (!type) continue;
+                out.push({
+                    node: r.node, trail: r.trail, type,
+                    key: r.trail.length ? [...r.trail, r.node.name].join('/') : r.node.name,
+                });
+            }
+            return out;
+        });
+        const searchFlat = computed(() => searchResults.value.filter(r => !classifySearchResult(r)));
+
         // 搜索结果的展示路径
         const resultPath = (trail) => '/' + trail.join('/');
 
@@ -768,6 +797,23 @@ createApp({
             img.src = img.src.replace('/1.jpg?', '/1.png?');
         };
 
+        // ── 搜索结果封面墙：按 item.key（完整相对路径）生成可缓存 /thumb URL ──
+        // 与浏览侧 loadCovers 同约定：单本封面取首图、连载作品封面取根 1.jpg（bookCover 都能取到），
+        // 给 <img> 可缓存 URL + onCoverError 1.jpg→1.png 回退。key 与 searchPosters 一致。
+        const searchCoverMap = ref({});
+        const loadSearchCovers = () => {
+            const token = localStorage.getItem('baka_token');
+            const tokenQ = token ? `&token=${encodeURIComponent(token)}` : '';
+            const next = {};
+            for (const p of searchPosters.value) {
+                const cover = bookCover(p.node);
+                if (!cover) continue;
+                const enc = (p.key + '/' + cover).split('/').map(encodeURIComponent).join('/');
+                next[p.key] = `${API_BASE}/thumb/${enc}?size=mid${tokenQ}`;
+            }
+            searchCoverMap.value = next;
+        };
+
         // 批量拉当前目录下漫画本的 article.md 元数据（真标题）
         const loadBookMetas = (dir) => {
             if (!dir || !dir.children) return;
@@ -780,6 +826,41 @@ createApp({
         };
 
         watch(currentDir, (dir) => { loadThumbnails(dir); loadCovers(dir); loadBookMetas(dir); });
+
+        // ── 搜索结果 article.md 元数据（单行本卡：真标题/作者/来源），按路径 key 跨组不撞 ──
+        const searchMeta = reactive({});
+        const _searchMetaFetching = new Set();
+        const searchBookTitle = (item) => {
+            const m = searchMeta[item.key];
+            return (m && m.title) ? m.title : item.node.name;
+        };
+        const loadSearchMetas = async () => {
+            for (const p of searchPosters.value) {
+                if (p.type !== 'book') continue;            // 连载无根级 article.md
+                if (_searchMetaFetching.has(p.key) || searchMeta[p.key]) continue;
+                const hasArticle = (p.node.children || []).some(c =>
+                    c.type === 'file' && c.name.toLowerCase() === 'article.md');
+                if (!hasArticle) continue;
+                _searchMetaFetching.add(p.key);
+                try {
+                    const token = localStorage.getItem('baka_token');
+                    const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                    const url = `${API_BASE}/files/${p.key.split('/').map(encodeURIComponent).join('/')}/article.md`;
+                    const res = await fetch(url, opts);
+                    if (res.ok) searchMeta[p.key] = parseArticleMd(await res.text());
+                } catch (_) { /* 静默 */ }
+                finally { _searchMetaFetching.delete(p.key); }
+            }
+        };
+
+        // 命中变化即加载封面墙 + 元数据；清空搜索时清理，避免残留（视图虽隐藏，留干净）
+        watch(searchPosters, () => {
+            if (isSearching.value) { loadSearchCovers(); loadSearchMetas(); }
+            else {
+                searchCoverMap.value = {};
+                Object.keys(searchMeta).forEach(k => delete searchMeta[k]);
+            }
+        });
 
         // 导航全部走 hash（改 location.hash → hashchange → loadLevel）。
         const goToLevel = (index) => {

@@ -542,7 +542,35 @@
                         </div>
                         <div v-else>
                             <p class="text-xs text-sky-400 px-2 mb-2">找到 {{ searchResults.length }} 个结果<span v-if="searchResults.length >= 200">（只显示前 200 个，缩小关键词试试）</span></p>
-                            <div v-for="(r, i) in searchResults" :key="i"
+                            <!-- 漫画命中：封面海报墙（单本 + 连载，点击复用 goToSearchResult） -->
+                            <div v-if="searchPosters.length" class="manga-grid mb-2">
+                                <template v-for="item in searchPosters" :key="item.key">
+                                    <!-- 连载作品：点击进作品目录看话列表；封面取作品根 1.jpg -->
+                                    <div v-if="item.type === 'series'" class="poster" @click="goToSearchResult(item)">
+                                        <img v-if="searchCoverMap[item.key]" :src="searchCoverMap[item.key]" @error="onCoverError" class="poster-img" loading="lazy" draggable="false">
+                                        <div v-else class="poster-placeholder">📚</div>
+                                        <div class="poster-badge">{{ chapterCount(item.node) }}话</div>
+                                        <div class="poster-glass">
+                                            <div class="poster-title">{{ item.node.name }}</div>
+                                        </div>
+                                    </div>
+                                    <!-- 单行本：标题取 article.md，回退目录名 -->
+                                    <div v-else-if="item.type === 'book'" class="poster" @click="goToSearchResult(item)">
+                                        <img v-if="searchCoverMap[item.key]" :src="searchCoverMap[item.key]" @error="onCoverError" class="poster-img" loading="lazy" draggable="false">
+                                        <div v-else class="poster-placeholder">📖</div>
+                                        <div class="poster-badge">{{ bookPageCount(item.node) }}P</div>
+                                        <div v-if="searchMeta[item.key] && searchMeta[item.key].source" class="poster-source">{{ searchMeta[item.key].source }}</div>
+                                        <div class="poster-glass">
+                                            <div class="poster-title">{{ searchBookTitle(item) }}</div>
+                                            <div class="poster-sub" :title="searchMeta[item.key] && searchMeta[item.key].author">
+                                                {{ (searchMeta[item.key] && searchMeta[item.key].author) || '' }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                            <!-- 非漫画命中：扁平列表（单页文件 / 普通目录 / 汉化组目录） -->
+                            <div v-for="(r, i) in searchFlat" :key="'f' + i"
                                  @click="goToSearchResult(r)"
                                  class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-sky-50 cursor-pointer transition border-b border-sky-50/60">
                                 <span class="text-xl shrink-0">{{ r.node.type === 'dir' ? '📁' : fileTypeIcon(r.node.name) }}</span>
