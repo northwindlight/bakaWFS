@@ -53,6 +53,8 @@ createApp({
         const currentRole = ref(localStorage.getItem('baka_role') || '');
         const loginForm = ref({ username: '', password: '' });
         const authMode = ref(false);
+        const mangaMode = ref(false);
+        const showFileList = ref(false);
         // 仅 admin 可见写操作入口（上传/删除/改名/新建/远程下载）；后端 403 兜底。
         const isAdmin = computed(() => currentRole.value === 'admin');
 
@@ -75,7 +77,7 @@ createApp({
                         currentRole.value = data.role;
                     }
                     return true;
-                } else {
+                } else if (res.status === 401 || res.status === 403) {
                     localStorage.removeItem('baka_token');
                     localStorage.removeItem('baka_user');
                     localStorage.removeItem('baka_role');
@@ -84,6 +86,8 @@ createApp({
                     currentRole.value = '';
                     alert(i18n.tokenExpired);
                     return false;
+                } else {
+                    throw new HttpError(res.status);
                 }
             } catch (error) {
                 console.error('Token验证失败:', error);
@@ -116,7 +120,16 @@ createApp({
         };
 
         const handleLogout = () => {
-            localStorage.clear();
+            ['baka_token', 'baka_user', 'baka_role'].forEach(key => localStorage.removeItem(key));
+            closeViewer();
+            stopPolling();
+            searchTree.value = null;
+            searchQuery.value = '';
+            currentDir.value = null;
+            ++_loadSeq;
+            _loadAbort?.abort();
+            if (authMode.value) showLogin.value = true;
+            else loadLevel(parseHash());
             isLoggedIn.value = false;
             currentUser.value = '';
             currentRole.value = '';
@@ -331,7 +344,7 @@ createApp({
         // 只有子目录、没有根图——若直接套 isSeriesDir 会把它们误归为连载卡（无封面、徽标错标「N话」），
         // 故用「有子目录且有根图」作为连载的判别，无根图的目录留给扁平列表。
         const classifySearchResult = (r) => {
-            if (r.node.type !== 'dir') return null;
+            if (!mangaMode.value || r.node.type !== 'dir') return null;
             if (isMangaBook(r.node)) return 'book';
             const ch = r.node.children || [];
             if (!ch.some(c => c.type === 'file' && isImageFile(c.name))) return null;
@@ -364,7 +377,7 @@ createApp({
             clearSearch();
             const { node, trail } = result;
             if (node.type === 'dir') {
-                if (isMangaBook(node)) pendingOpenBook.value = true;
+                if (mangaMode.value && isMangaBook(node)) pendingOpenBook.value = true;
                 navigateTo([...trail, node.name]);
             } else {
                 pendingOpenFile.value = node.name;
@@ -460,7 +473,7 @@ createApp({
         const getFileUrl = (fileName) => {
             if (!currentDir.value) return '#';
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
-            return `${API_BASE}/files/${pathParts.join('/')}`;
+            return `${API_BASE}/files/${pathParts.map(encodeURIComponent).join('/')}`;
         };
 
         const getThumbUrl = (fileName) => {
@@ -632,7 +645,7 @@ createApp({
 
         // 当前目录下：哪些子项是漫画本、哪些是普通目录/文件
         const currentIsBookGrid = computed(() =>
-            sortedFiles.value.some(n => isMangaBook(n) || isSeriesDir(n))
+            mangaMode.value && sortedFiles.value.some(n => isMangaBook(n) || isSeriesDir(n))
         );
 
         // 分组网格（汉化组层）：靠爬虫标记文件判定，而非脆弱地推导子目录内容。
@@ -641,7 +654,7 @@ createApp({
         const CRAWL_MARK = /^\..*crawl/i;
         const currentIsGroupGrid = computed(() => {
             const ch = currentDir.value?.children || [];
-            return ch.some(c => c.type === 'file' && CRAWL_MARK.test(c.name));
+            return mangaMode.value && ch.some(c => c.type === 'file' && CRAWL_MARK.test(c.name));
         });
 
         // 取汉化组封面墙（前 4 部作品）。组列表层是浅扫（depth2），汉化组的直接子目录
@@ -825,7 +838,7 @@ createApp({
             }
         };
 
-        watch(currentDir, (dir) => { loadThumbnails(dir); loadCovers(dir); loadBookMetas(dir); });
+        watch(currentDir, (dir) => { if (mangaMode.value) { loadThumbnails(dir); loadCovers(dir); loadBookMetas(dir); } });
 
         // ── 搜索结果 article.md 元数据（单行本卡：真标题/作者/来源），按路径 key 跨组不撞 ──
         const searchMeta = reactive({});
@@ -873,7 +886,7 @@ createApp({
             if (item.type === 'dir') {
                 // 漫画本/话：进入目录后直接翻页阅读（看第一页）。
                 // 连载作品目录（isSeriesDir）不直接阅读——进入后看话列表（currentIsBookGrid）。
-                if (isMangaBook(item)) {
+                if (mangaMode.value && !showFileList.value && isMangaBook(item)) {
                     pendingOpenBook.value = true;
                 }
                 navigateTo([...pathStack.value.map(p => p.name), item.name]);
@@ -904,11 +917,12 @@ createApp({
         // 每次切图自增，用于丢弃过期的异步结果（快速翻页时）
         let _viewerSeq = 0;
 
+        let _imageSession = 0;
         const fetchAuthUrl = async (url) => {
             const token = localStorage.getItem('baka_token');
             if (!token) return url;
             const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
-            if (!res.ok) return url;
+            if (!res.ok) throw new HttpError(res.status);
             return URL.createObjectURL(await res.blob());
         };
 
@@ -916,10 +930,16 @@ createApp({
         const getImageBlobUrl = (url) => {
             if (_imageBlobCache.has(url)) return Promise.resolve(_imageBlobCache.get(url));
             if (_imageFetchingMap.has(url)) return _imageFetchingMap.get(url);
+            const session = _imageSession;
             const p = fetchAuthUrl(url).then(blobUrl => {
+                if (session !== _imageSession) {
+                    if (blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+                    throw new Error('Reader closed');
+                }
                 _imageBlobCache.set(url, blobUrl);
-                _imageFetchingMap.delete(url);
                 return blobUrl;
+            }).finally(() => {
+                if (_imageFetchingMap.get(url) === p) _imageFetchingMap.delete(url);
             });
             _imageFetchingMap.set(url, p);
             return p;
@@ -930,7 +950,7 @@ createApp({
             const start = Math.max(0, centerIdx - PRELOAD_BEHIND);
             const end   = Math.min(list.length - 1, centerIdx + PRELOAD_AHEAD);
             for (let i = start; i <= end; i++) {
-                getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).then(blobUrl => {
+                if (mangaMode.value) getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).then(blobUrl => {
                     const img = new Image(); img.src = blobUrl; // 触发浏览器解码
                 }).catch(() => {});
                 getImageBlobUrl(getFileUrl(list[i].name)).catch(() => {});
@@ -948,9 +968,13 @@ createApp({
         };
 
         const closeViewer = () => {
+            ++_viewerSeq;
+            ++_imageSession;
+            viewerImageList.value = [];
             viewer.value = { show: false, type: null };
-            viewerVideoUrl.value = '';
             viewerCurrentImageUrl.value = '';
+            if (viewerVideoUrl.value.startsWith('blob:')) URL.revokeObjectURL(viewerVideoUrl.value);
+            viewerVideoUrl.value = '';
             for (const [, blobUrl] of _imageBlobCache) {
                 if (typeof blobUrl === 'string' && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
             }
@@ -961,7 +985,7 @@ createApp({
         const viewerNext = () => { if (viewerImageIndex.value < viewerImageList.value.length - 1) viewerImageIndex.value++; };
 
         watch([viewerImageList, viewerImageIndex], async ([list, idx]) => {
-            if (!list.length) { viewerCurrentImageUrl.value = ''; return; }
+            if (!viewer.value.show || !list.length) { viewerCurrentImageUrl.value = ''; return; }
             const seq = ++_viewerSeq;
             const name = list[idx].name;
             const midUrl  = `${getThumbUrl(name)}?size=mid`;
@@ -981,7 +1005,7 @@ createApp({
             viewerCurrentImageUrl.value = '';
             // 中图先显示——等解码完再赋值，一设即出
             try {
-                const midBlob = await getImageBlobUrl(midUrl);
+                const midBlob = await getImageBlobUrl(mangaMode.value ? midUrl : fullUrl);
                 if (seq !== _viewerSeq) return;
                 await decodeThenSet(midBlob);
                 if (seq === _viewerSeq) viewerCurrentImageUrl.value = midBlob;
@@ -1000,11 +1024,15 @@ createApp({
 
         // 目标选择器（复制/移动用）也走懒加载：pickerCurrent 是当前层的已加载节点。
         const pickerCurrent = ref(null);
+        let pickerSeq = 0;
         const loadPickerLevel = async (names) => {
+            const seq = ++pickerSeq;
             try {
                 const qs = names.length ? `?path=${encodeURIComponent(names.join('/'))}` : '';
                 const res = await fetchWithRetry(`${API_BASE}/list${qs}`, authHeaders(), 3, 500);
-                pickerCurrent.value = await res.json();
+                const data = await res.json();
+                if (seq !== pickerSeq) return;
+                pickerCurrent.value = data;
                 pickerStack.value = names.map(n => ({ name: n }));
             } catch (e) {
                 console.error('选择器加载失败', e);
@@ -1031,6 +1059,8 @@ createApp({
         };
 
         const openFileViewer = async (item) => {
+            closeViewer();
+            const session = _imageSession;
             const name = item.name;
             const ft = classifyFile(name);
             viewerFileName.value = name;
@@ -1045,7 +1075,17 @@ createApp({
                 viewer.value = { show: true, type: 'image' };
             } else if (ft === 'video') {
                 viewer.value = { show: true, type: 'video' };
-                viewerVideoUrl.value = await fetchAuthUrl(getFileUrl(name));
+                try {
+                    const url = await fetchAuthUrl(getFileUrl(name));
+                    if (session === _imageSession) viewerVideoUrl.value = url;
+                    else if (url.startsWith('blob:')) URL.revokeObjectURL(url);
+                } catch (error) {
+                    if (session === _imageSession) {
+                        viewer.value = { show: true, type: 'text' };
+                        viewerTextTooLarge.value = false;
+                        viewerTextContent.value = '读取失败：' + error.message;
+                    }
+                }
             } else if (ft === 'text') {
                 viewerTextTooLarge.value = false;
                 viewerTextContent.value  = '';
@@ -1059,11 +1099,13 @@ createApp({
                         const token = localStorage.getItem('baka_token');
                         const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
                         const res = await fetch(getFileUrl(name), opts);
-                        viewerTextContent.value = await res.text();
+                        if (!res.ok) throw new HttpError(res.status);
+                        const text = await res.text();
+                        if (session === _imageSession) viewerTextContent.value = text;
                     } catch(e) {
-                        viewerTextContent.value = '读取失败：' + e.message;
+                        if (session === _imageSession) viewerTextContent.value = '读取失败：' + e.message;
                     } finally {
-                        viewerLoading.value = false;
+                        if (session === _imageSession) viewerLoading.value = false;
                     }
                 }
             } else {
@@ -1295,10 +1337,13 @@ createApp({
             return parts.join('/');
         };
 
+        const operationBusy = ref(false);
         const confirmRename = async () => {
             if (!renameName.value.trim()) return;
             const src = getItemPath(opsTarget.value);
             const dst = getPickerPath(renameName.value.trim());
+            if (operationBusy.value) return;
+            operationBusy.value = true;
             try {
                 const res = await fetch(`${API_BASE}/rename`, {
                     method: 'POST',
@@ -1313,6 +1358,8 @@ createApp({
                 refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
+            } finally {
+                operationBusy.value = false;
             }
         };
 
@@ -1320,6 +1367,8 @@ createApp({
             if (!copyName.value.trim()) return;
             const src = getItemPath(opsTarget.value);
             const dst = getPickerPath(copyName.value.trim());
+            if (operationBusy.value) return;
+            operationBusy.value = true;
             try {
                 const res = await fetch(`${API_BASE}/copy`, {
                     method: 'POST',
@@ -1334,11 +1383,15 @@ createApp({
                 refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
+            } finally {
+                operationBusy.value = false;
             }
         };
 
         const confirmDelete = async () => {
             const src = getItemPath(opsTarget.value);
+            if (operationBusy.value) return;
+            operationBusy.value = true;
             try {
                 const res = await fetch(`${API_BASE}/delete`, {
                     method: 'POST',
@@ -1353,6 +1406,8 @@ createApp({
                 refreshAfterWrite();
             } catch (e) {
                 alert(i18n.operationFailed + e.message);
+            } finally {
+                operationBusy.value = false;
             }
         };
 
@@ -1367,6 +1422,8 @@ createApp({
             if (!mkdirName.value.trim()) return;
             const parts = [...pathStack.value.map(p => p.name), mkdirName.value.trim()];
             const dst = parts.join('/');
+            if (operationBusy.value) return;
+            operationBusy.value = true;
             try {
                 const res = await fetch(`${API_BASE}/mkdir`, {
                     method: 'POST',
@@ -1381,6 +1438,8 @@ createApp({
                 refreshAfterWrite();
             } catch (e) {
                 alert(i18n.mkdirFailed + e.message);
+            } finally {
+                operationBusy.value = false;
             }
         };
 
@@ -1389,7 +1448,9 @@ createApp({
             // 强制鉴权模式下登录框(v-if=authMode&&!isLoggedIn)就不出，卡在空的主界面。
             try {
                 const res = await fetchWithRetry(`${API_BASE}/api/config`, {}, 3, 500);
-                authMode.value = !!(await res.json()).auth_mode;
+                const config = await res.json();
+                authMode.value = !!config.auth_mode;
+                mangaMode.value = !!config.manga_mode;
             } catch (_) {
                 // 配置都拉不到也不慌：下面 loadLevel 若撞 401 会由 handleAuthRequired 纠正 authMode。
             }
@@ -1416,7 +1477,7 @@ createApp({
 
         return {
             i18n,
-            loading, isLoggedIn, currentUser, currentRole, isAdmin, showLogin, loginForm, authMode, pathStack, sortedFiles,
+            loading, mangaMode, showFileList, isLoggedIn, currentUser, currentRole, isAdmin, showLogin, loginForm, authMode, pathStack, sortedFiles,
             handleLogin, handleLogout, handleFileUpload, handleItemClick,
             goHome, goToLevel, formatSize, getFileUrl, downloadFile,
             showRemoteModal, showProgressModal, showUploadMenu, remoteUrl, progressData,
@@ -1430,12 +1491,12 @@ createApp({
             classifyFile, fileTypeIcon, getFileExt,
             thumbMap, isImageFile,
             // 搜索
-            searchQuery, isSearching, searchTreeLoading, searchResults, resultPath, goToSearchResult, clearSearch,
+            searchQuery, isSearching, searchTreeLoading, searchResults, searchPosters, searchFlat, searchCoverMap, searchMeta, searchBookTitle, resultPath, goToSearchResult, clearSearch,
             // 漫画版渲染
             isMangaBook, bookCover, bookPageCount, coverMap, currentIsBookGrid,
             currentIsGroupGrid, groupBooks, groupBookCount, onCoverError, bookMeta, bookTitle, aggregatedBooks, isSeriesDir, chapterCount,
             // 文件操作
-            opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
+            operationBusy, opsPanelFor, showRenameModal, showCopyModal, showDeleteConfirm,
             opsTarget, pickerStack, renameName, copyName, pickerDirs,
             toggleOpsPanel, startRename, startCopy, startDelete,
             confirmRename, confirmCopy, confirmDelete,

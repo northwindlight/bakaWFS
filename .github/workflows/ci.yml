@@ -25,3 +25,21 @@ jobs:
 
       - name: Test
         run: go test ./... -v -race
+
+  browser:
+    name: Browser (ordinary + manga)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:ui
+      - run: git diff --exit-code -- html/tailwind.css html/vendor
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm test

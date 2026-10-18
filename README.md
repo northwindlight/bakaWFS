@@ -1,207 +1,93 @@
-# baka-web-file-server · 漫画版（manga）
+# bakaWFS
 
-> **⚠️ 本分支会改写原始图片文件。** 漫画版为了缩略图缓存,会把内容哈希写入图片自身的元数据（PNG `tEXt` chunk / JPEG `APP9` 段）。改写是原子的、不改变图像像素,但文件字节和修改时间会变,且不可逆。**不接受请用 [`main`](../../tree/main)。**
+轻量、无数据库的自托管文件服务器。Go 标准库 HTTP、JWT 鉴权、串行文件操作队列，附带内置 Web UI。
 
----
-
-一个轻量、无状态的自托管文件服务器。基于 HTTPS + JWT,提供 RPC 风格的 API,支持文件上传、远程 URL 下载和进度追踪。附带开箱即用的 Web 界面,部署简单。
-
-类似 filebrowser,但完全独立实现。后端由我完成,前端约 40% 由 AI 生成。
-
-漫画版在主线全部能力之上,叠加了针对漫画浏览的缩略图与渐进式加载。
-
-主线（通用文件服务器,**不碰原图**）见 [`main`](../../tree/main) 分支。
+统一代码提供两种模式：默认是通用文件管理；显式开启 `manga_mode` 后提供漫画封面墙、缩略图和渐进阅读器。后续只维护 `main`，`manga` 保留历史，不再重复修复和单独发版。
 
 ## 功能
 
-- 文件浏览、上传、下载
-- 文件管理：重命名/移动、复制（原子操作）、删除、新建文件夹
-- 远程 URL 下载到服务器
-- 分片上传 + xxhash 完整性校验
-- JWT 登录鉴权 + Token 自动续签
-- 并发远程下载任务管理（支持取消和进度追踪）
-- 内置 Web UI（编译时嵌入二进制,也支持外部目录）
-- 鉴权模式：开启后所有接口（含浏览/下载）强制登录,前端打开即显示登录界面
-- 跨平台服务封装：一条命令注册为系统服务并自启动（Linux systemd / Windows SCM / macOS launchd）
-- **列表缩略图** — `POST /thumbs` 批量拉取目录所有图片的 96px 缩略图,二进制流,列表直接显示预览
-- **渐进加载** — 阅读器先显示 600px 中图,后台拉原图无缝替换;预加载相邻页
-- **内容寻址缓存** — 缩略图以图像数据 xxhash64 为 key,文件移动/改名后缓存自动命中
-- **批量预生成** — `go run ./cmd/pregenthumbs` 一次性生成全部缩略图
-
-### 图片元数据
-
-图片文件不是一整块二进制。PNG 由名为 chunk 的分段组成,其中有 `IDAT`（像素压缩流）和 `tEXt`（文本备注）;JPEG 同样,`SOS` 之后是像素扫描数据,`APPn` 段是应用自定义区。**看图器只解码像素流,元数据段直接跳过**,所以在 `tEXt` 或 `APPn` 里塞一条文字,画面纹丝不动。
-
-漫画版利用这个特性:往图片自身的元数据区写入一条哈希值。文件还是标准 PNG / JPEG,所有看图器正常打开。
-
-### 它会改什么
-
-第一次访问某张图时（点开阅读器、浏览含图片的目录、或跑 `pregenthumbs` 批量预生成）：
-
-1. 算图像像素数据的 xxhash64
-2. 在文件头部插入一条元数据:PNG 是 `tEXt` chunk 放在 `IHDR` 之后,JPEG 是 `APP9` 段放在 `SOI` 之后,内容为 `bakawfs-xxh` + 16 位 hex 哈希,共约 30 字节
-3. 文件增加几十字节、mtime 更新,**像素不变**（嵌入前后的解码结果逐像素一致）
-4. 之后任何一次访问,只读文件头几 KB 取出哈希,不碰全文件
-
-改动是原子的（临时文件 + rename,中断不毁原图）、幂等的（已有该 chunk 不再重复插入）。
-
-### 这算破坏原图吗
-
-如果你把"原图"理解为**一个完整的容器文件**——是的,字节变了。如果你把"原图"理解为**画面的像素内容**——没有,一个像素都没变。
-
-图片文件天生是个双层结构:图像数据(你看到的画面)和元数据(给软件看的备注)。两者独立解码,互不干扰。相机写入 EXIF、PS 写入版权信息、你右键"属性"填备注——和本程序做的事完全一样:往容器里多挂了一条标签,画面纹丝不动。前面验证过的逐像素一致,就是证据。
-
-真正破坏原图的行为是**重压缩**(JPEG 重新编码丢失细节)或**缩放裁切**(像素被修改)。本程序既不重压缩也不改画面,本质上只是在图片容器里留下了自己来过的记号。
-
-### 无状态
-
-一个程序"有状态",意味着它自己维护了一份关于真实世界的信息,并把这份信息当作决策依据。问题是,信息会过期、会不一致、需要在每次真实世界发生变化时更新。而你永远不知道哪次更新漏了。
-
-bakaWFS 选择不维护这份信息。文件系统上有什么就是什么,不需要额外的索引、会话、配置数据库来告诉它"文件在哪"或"谁登陆了"。每个功能的设计问题都被压缩成同一个问题:**能不能只靠磁盘回答**。能,就做;不能,砍掉。
-
-缩略图缓存一样。如果用一个独立的映射表记录"哪个文件对应哪个缓存",那就需要维护这张表和磁盘上真实文件的一致性,又造了一个状态问题。解决方式是把标识号写进图片自己的元数据——缓存的身份信息长在文件身上,不是程序记着的。
-
-**内容哈希保证了缓存与文件内容一一对应。** 文件移动、改名——内容不变,缓存不变。
-
-**元数据嵌入保证了下次可以直接读出哈希。** 读几 KB 文件头就够了,不重算全文件。
-
-**哈希只覆盖像素数据,不覆盖元数据区。** 嵌入后重算结果不变,可随时校验真理没有被扭曲。
-
-## 预览
-
-![主目录](assets/main-dir.png)
-![文件操作面板](assets/file-ops.png)
-![图片预览](assets/image-preview.png)
-![上传管理](assets/upload-mgmt.png)
+- 文件浏览、全库搜索、下载、文本/图片/视频预览
+- 上传、分片上传及 xxhash 校验、远程下载与取消
+- 重命名、移动、复制、新建目录、删除
+- admin / guest 读写分级、JWT 自动续签、可选全站鉴权
+- 内置或外置前端，支持同源及前后端分离部署
+- Linux systemd / Windows SCM / macOS launchd 服务管理
+- 可选漫画模式：封面墙、连载展示、缩略图和渐进加载
 
 ## 快速开始
 
-```bash
+```sh
+go build -o bakaWFS .
 ./bakaWFS
 ```
 
-首次运行会在当前目录生成 `config.yaml` 和 `users.yaml`,编辑后重新启动即可。
-
-### 注册为系统服务
-
-```bash
-./bakaWFS install   # 安装并设为自启动
-./bakaWFS start     # 立即启动服务
-./bakaWFS stop      # 停止服务
-./bakaWFS status    # 查看运行状态
-./bakaWFS uninstall # 卸载服务
-```
-
-服务工作目录固定为二进制所在目录,`config.yaml` 与二进制放在同一目录即可。Linux 上需要 root 权限执行 install/uninstall。
-
-### 首次配置
-
-**必须修改的字段：**
-
-```yaml
-secret: "替换为随机字符串"   # JWT 签名密钥
-```
-
-**TLS 证书（可选）：**
-
-```yaml
-cert_path: "certificate.crt"
-key_path:  "private.key"
-```
-
-启用 TLS 前请准备好证书。未启用 TLS 时,**不要将服务暴露在公网**。
-
-## 配置说明
-
-`config.yaml`：
+首次启动生成 `config.yaml` 和 `users.yaml`。共享只读账号为 `baka/baka`，可写 `admin` 口令随机生成并打印一次。已有用户未指定 `role` 时按 guest 处理。
 
 ```yaml
 address: "0.0.0.0"
-https_port: 443          # 设为 -1 关闭该协议。两者同时开启时 HTTP 自动重定向到 HTTPS
-http_port:  80
-secret: ""
+https_port: -1
+http_port: 8080
+secret: "首次启动自动生成"
 cert_path: "certificate.crt"
-key_path:  "private.key"
-file_dir:   "files"      # 文件存储根目录
-html_dir:   "built-in"   # "built-in"=内置前端 / 外部目录路径 / 留空禁用前端（纯 API 模式）
-temp_dir:   ".uploads"   # 临时目录（分片上传、远程下载暂存）
+key_path: "private.key"
+file_dir: "files"
+html_dir: "built-in"     # 内置前端 / 外部目录 / 留空禁用前端
 users_file: "users.yaml"
-download_workers: 2       # 并发远程下载 worker 数
-audit_log: ""             # 审计日志路径,留空关闭
-cors_enabled: false       # 是否启用 CORS 跨域支持
-auth_mode: false          # 鉴权模式：true = 所有接口需登录；false = 开放模式（仅写操作需登录）
+temp_dir: ".uploads"
+download_workers: 2
+audit_log: ""
+cors_enabled: false
+auth_mode: false        # true 时浏览和下载也需登录
+manga_mode: false       # 默认关闭；开启后会向原图写入哈希元数据
+trash_dir: ""           # 默认在真实 file_dir 旁创建 .bakawfs-trash 后缀的目录
 ```
 
-`users.yaml`：
+服务工作目录为二进制目录。TLS 端口设为 `-1` 表示关闭；公网部署应配置 TLS 或反向代理。前后端分离时修改 `html/main.js` 的 `API_BASE`，并开启 `cors_enabled`；空 `API_BASE` 表示同源部署。
 
-```yaml
-users:
-  - username: "baka"
-    password: "bakabaka"
+```sh
+./bakaWFS install
+./bakaWFS start
+./bakaWFS stop
+./bakaWFS restart
+./bakaWFS status
+./bakaWFS uninstall
 ```
 
-## API
+## 从原有分支升级
 
-| 方法 | 路径 | 说明 | 鉴权 |
-|------|------|------|------|
-| GET  | `/api/config` | 获取服务器配置（如 auth_mode） | 否 |
-| POST | `/login` | 登录,返回 JWT | 否 |
-| POST | `/verify` | 验证并续签 Token | 是 |
-| GET  | `/list` | 获取文件目录树 | auth_mode 时需要 |
-| GET  | `/files/*` | 下载文件（支持 Range,强制 Content-Disposition: attachment） | auth_mode 时需要 |
-| GET  | `/thumb/<path>?size=` | 单图缩略图（list=96px / mid=600px） | 同 `/files` |
-| POST | `/thumbs` | 批量缩略图,二进制流,body `{"paths":[...]}` | 同 `/files` |
-| POST | `/upload` | 上传文件（整体上传） | 是 |
-| POST | `/upload/chunk` | 上传单个分片 | 是 |
-| POST | `/upload/merge` | 合并分片 | 是 |
-| POST | `/remote-upload` | 从 URL 下载文件到服务器 | 是 |
-| GET  | `/progress` | 查看远程下载进度 | 是 |
-| POST | `/cancel` | 取消远程下载任务 | 是 |
-| POST | `/delete` | 删除文件或目录 | 是 |
-| POST | `/rename` | 重命名 / 移动文件或目录 | 是 |
-| POST | `/copy` | 复制文件或目录 | 是 |
-| POST | `/mkdir` | 新建文件夹 | 是 |
+- 原 `main` 用户保持 `manga_mode: false`（省略也为 false），原图不会因浏览而被改写。
+- 原 `manga` 用户在原配置中加入 `manga_mode: true`，继续使用原文件目录和 `.thumbcache`。若省略则进入普通模式。
+- 使用外置前端时同步更新整个 `html/`（含 `style.css`）；原部署的 `API_BASE` 和本地 vendor 地址需自行保留。
+- 两种模式使用同一份二进制及版本号，不再需要双线 cherry-pick。
 
-鉴权接口需在 Header 中携带 `Authorization: Bearer <token>`。`/thumbs` 返回自描述二进制流：`[uint32 数量]{[uint16 路径长][路径][uint32 图长][JPEG]}`。
+漫画模式生成缩略图时会向 PNG/JPEG 原图嵌入哈希元数据：像素不变，文件字节和 mtime 会变。具体语义见 [漫画模式](docs/manga.md)。
 
-详细 API 文档见 [bakaWFS API](bakaWFS_API.md)。
+## 删除语义
 
-## 项目结构
+删除先在串行队列内把整个目标 `rename` 到文件区外的暂存目录，再由独立 worker 物理清理。API 返回 204 表示原路径已整体移除；磁盘空间可能稍后释放。后台清理失败会记录日志，每分钟重试，重启也会自动扫描残留。它不是可恢复回收站。
 
-```
-.
-├── program.go           # 主入口
-├── embed.go             # 嵌入前端静态文件
-├── windows-terminal.go  # Windows 终端色彩适配
-├── linux-terminal.go    # Linux/macOS 终端输出
-├── config.yaml
-├── users.yaml
-├── cmd/
-│   └── pregenthumbs/    # 批量预生成缩略图并嵌入哈希
-├── internal/
-│   ├── auth/            # JWT 逻辑
-│   ├── config/          # 配置加载与校验
-│   ├── fileops/         # 串行化文件变更队列 + 审计日志
-│   ├── fileutil/        # 文件工具函数（含 xxhash 校验、目录树）
-│   ├── handler/         # HTTP handler 与中间件
-│   ├── task/            # 远程下载任务管理
-│   └── thumb/           # 缩略图生成 + 哈希元数据读写
-├── files/               # 文件存储目录
-├── html/                # 前端静态文件（编译时嵌入二进制）
-├── .uploads/            # 临时目录,启动时自动清理
-└── .thumbcache/         # 缩略图缓存目录
+暂存区须与文件区位于同一文件系统，且不能位于文件区内或包含文件区。默认使用解析软链后的文件根目录加 `.bakawfs-trash` 后缀。若文件根本身是挂载点，须把 `trash_dir` 指向同盘且不公开的位置；跨盘或权限不足会拒绝删除并保留原目录，不会降级为递归删除。更改暂存区路径前须处理旧区残留。
+
+## 验证
+
+```sh
+go test ./...
+go vet ./...
+go test -race ./...  # 支持 race 的主机；CI 使用 Linux amd64
+npm ci
+npm run build:ui
+npx playwright-core install --with-deps chromium
+npm test
 ```
 
-## 依赖
+浏览器回归使用临时数据启动真实后端，覆盖两种模式、原图写入边界、搜索、登录退出、目录操作和 320/390/1280px 布局。可用 `CHROMIUM_PATH` 指定浏览器。运行库和 Tailwind 静态 CSS 已包含在 `html/`，普通 Go 编译与部署不需要 Node；修改前端模板/依赖后执行 `npm run build:ui` 更新产物。测试会拦截外站请求，验证页面无需外部 CDN。
 
-| 依赖 | 说明 |
-|------|------|
-| [golang-jwt](https://github.com/golang-jwt/jwt) | JWT 认证 |
-| [xxhash](https://github.com/cespare/xxhash) | 分片上传 + 缩略图缓存 key（客户端 Wasm + 服务端双重校验） |
-| [go-colorable](https://github.com/mattn/go-colorable) | 旧版 Windows CMD 终端色彩回退适配 |
-| [kardianos/service](https://github.com/kardianos/service) | 跨平台系统服务封装（systemd / SCM / launchd） |
-| [x/image](https://golang.org/x/image) | 缩略图缩放与 WebP 解码 |
+前端依赖锁定 Vue 3.5.44（[生产构建](https://vuejs.org/guide/best-practices/production-deployment)）、Tailwind CSS 4.3.3（[静态 CLI 构建](https://tailwindcss.com/docs/installation/tailwind-cli)）、[xxhash-wasm 1.1.0](https://github.com/jungomi/xxhash-wasm)。许可证随运行库提供，不包含私有字体。Tailwind 4 面向现代浏览器（Safari 16.4+、Chrome 111+、Firefox 128+）。
 
-## License
+## API 与维护
+
+[API 文档](bakaWFS_API.md) · [分支收敛与迁移说明](docs/maintenance.md)
+
+`GET /api/config` 返回 `auth_mode` 和 `manga_mode`。`/thumb/`、`/thumbs` 仅在漫画模式开放；其他文件 API 两种模式共用。文件系统始终是唯一状态来源，无索引数据库或持久会话。
 
 MIT License © 2026 Zhang Feng

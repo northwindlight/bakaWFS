@@ -5,19 +5,19 @@ export const isValidUrl = (url) => {
 };
 
 export const formatSpeed = (bytesPerSec) => {
-    if (bytesPerSec === undefined || bytesPerSec === null) return '--';
+    if (!Number.isFinite(bytesPerSec) || bytesPerSec < 0) return '--';
     if (bytesPerSec === 0) return '0 B/s';
     const k = 1024;
     const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-    const i = Math.floor(Math.log(bytesPerSec) / Math.log(k));
+    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(bytesPerSec) / Math.log(k))));
     return parseFloat((bytesPerSec / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 
 export const formatSize = (bytes) => {
-    if (!bytes) return '0 B';
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(sizes.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(k))));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
 

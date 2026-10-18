@@ -18,7 +18,7 @@ func newTestDownloader(t *testing.T, workers int) (*task.Downloader, string, str
 	tempDir := t.TempDir()
 	targetDir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	q, err := fileops.New(logger, "")
+	q, err := fileops.New(logger, "", t.TempDir())
 	if err != nil {
 		t.Fatalf("fileops.New: %v", err)
 	}

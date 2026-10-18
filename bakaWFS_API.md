@@ -425,3 +425,9 @@
 | 目标文件已存在 | 409 | Conflict: File already exists |
 | xxhash 不匹配（已清理所有分片，需整体重传） | 422 | `{"error": "hash mismatch"}` |
 | 合并或移动失败 | 500 | Internal Server Error |
+
+## 统一版模式与删除约定
+
+`GET /api/config` 响应包含 `auth_mode` 与 `manga_mode` 布尔值。普通模式（默认）不启用缩略图，`/thumb/`、`/thumbs` 返回 404（鉴权模式下仍须先通过鉴权）。漫画模式需显式配置 `manga_mode: true`。
+
+`POST /delete` 的 204 表示目标已通过同盘 rename 原子移出文件区，物理清理由后台完成；失败或跨盘不递归删除原路径。不能删除存储根目录。

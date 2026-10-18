@@ -1,5 +1,5 @@
-// Esm CDN 引入
-import xxhashWasm from 'https://cdn.jsdelivr.net/npm/xxhash-wasm@1.0.2/esm/xxhash-wasm.js';
+// 版本由 package-lock.json 锁定，npm run build:ui 同步可分发的 ESM 产物
+import xxhashWasm from './vendor/xxhash-wasm.js';
 
 let xxhashCreate = null;
 
@@ -11,6 +11,7 @@ const initPromise = xxhashWasm().then(hasher => {
 // 计算整个 File 的 xxhash64
 export async function hashFile(file, onProgress) {
     await initPromise; // 确保 Wasm 已加载完毕
+    if (!xxhashCreate) throw new Error('文件校验模块初始化失败，请刷新后重试');
     const h = xxhashCreate();
     const BLOCK = 4 * 1024 * 1024; // 4MB 块读取，避免内存溢出
     let offset = 0;

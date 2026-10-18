@@ -1,0 +1,80 @@
+:root {
+    color-scheme: light;
+    --cirno-light: #f0f7fb;
+    --cirno-blue: #2884af;
+    --cirno-dark: #23688b;
+    --cirno-ice: #fff;
+    --ink: #263d4d;
+    --muted: #708390;
+    --line: #e1e9ee;
+}
+[v-cloak] { display: none; }
+body {
+    margin: 0;
+    background: #f5f8fa;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+button, input { font: inherit; }
+button, a, input { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #2884af; outline-offset: 3px; }
+button:disabled { cursor: wait; opacity: .5; }
+body .site-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0 32px; }
+body .brand { display: flex; align-items: center; gap: 14px; color: inherit; text-decoration: none; min-width: 0; }
+body .brand img { object-fit: contain; }
+body .brand-kicker { font-size: 10px; font-weight: 650; color: var(--muted); letter-spacing: .16em; }
+body .brand h1 { margin: 4px 0 0; font-size: 24px; font-weight: 650; line-height: 1.3; letter-spacing: -.04em; }
+body .brand-mark { color: #78b6d2; margin-left: 8px; font-weight: 400; }
+body .account-btn { display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 10px 14px; font-size: 13px; flex-shrink: 0; }
+body .account-dot { width: 6px; height: 6px; border-radius: 50%; background: #a6b5bf; }
+body .account-dot.online { background: #499b83; }
+body .account-action { color: var(--muted); margin-left: 8px; font-size: 11px; }
+body .glass { background: var(--cirno-ice); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 3px 16px #233c5005; }
+body .file-toolbar { min-height: 70px; padding: 14px 18px; border-color: var(--line); }
+body .breadcrumbs { display: flex; align-items: center; gap: 8px; overflow: auto; font-size: 13px; color: var(--muted); }
+body .breadcrumbs button { flex-shrink: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body .breadcrumbs button:last-child { color: var(--ink); font-weight: 600; }
+body .breadcrumbs button:hover { color: var(--cirno-blue); }
+body .search-field { width: 210px; }
+body .search-field input { background: #f5f8fa; box-shadow: none; border: 1px solid var(--line); font-size: 12px; border-radius: 8px; }
+body .search-field input:focus { border-color: #78b6d2; }
+body .file-card { border-radius: 8px; margin-bottom: 0; border-bottom: 1px solid #eef2f5; }
+body .file-card:hover { background: #f4f9fc; }
+body .download-btn, body .ops-btn { background: #fff; border: 1px solid var(--line); color: #507487; padding: 6px 10px; border-radius: 7px; font-size: 12px; font-weight: 500; transition: background .15s; }
+body .download-btn:hover, body .ops-btn:hover { background: #edf6fb; }
+body .manga-grid { grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 20px; padding: 18px; }
+body .poster, body .group-card { border-radius: 9px; box-shadow: 0 2px 7px #203c5010; background: #e9f0f4; transition: transform .18s, box-shadow .18s; }
+body .poster:hover, body .group-card:hover { transform: translateY(-3px); box-shadow: 0 6px 16px #203c5020; }
+body .poster:hover .poster-img { transform: scale(1.025); }
+body .poster-glass, body .group-glass { background: linear-gradient(transparent, #10202be6); border: 0; backdrop-filter: none; padding: 34px 12px 12px; }
+body .poster-title, body .group-name { color: #fff; text-shadow: none; font-size: 13px; font-weight: 600; line-height: 1.5; }
+body .poster-sub, body .group-count { color: #d2e1ea; font-size: 11px; }
+body .poster-badge { border-radius: 5px; box-shadow: none; background: #163342b8; }
+body .poster-source { border-radius: 5px; box-shadow: none; }
+body .baka-float { animation: none; }
+/* 统一旧模板的强调色和对话框，不再叠加粗边框与蓝色投影。 */
+body .text-sky-800, body .text-sky-700 { color: #31586e; }
+body .text-sky-600, body .text-sky-500 { color: #467a97; }
+body .text-sky-400, body .text-sky-300 { color: #728c9c; }
+body .bg-sky-500 { background-color: #2b7fa6; }
+body .shadow-lg, body .shadow-xl { box-shadow: 0 5px 20px #18354a14; }
+body .shadow-2xl { box-shadow: 0 16px 60px #18354a26; }
+body .border-2 { border-width: 1px; }
+@media (max-width: 640px) {
+    body .site-header { padding: 4px 0 22px; }
+    body .brand { gap: 8px; }
+    body .brand img { width: 36px; height: 36px; }
+    body .brand h1 { font-size: 19px; }
+    body .brand-kicker { font-size: 9px; }
+    body .account-btn { padding: 8px 10px; }
+    body .account-action { display: none; }
+    body .file-toolbar { flex-wrap: wrap; gap: 10px; padding: 12px; }
+    body .breadcrumbs { flex-basis: calc(100% - 90px); }
+    body .search-field { flex: 1; min-width: 120px; }
+    body .manga-grid { padding: 10px; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+    body .file-card { padding: 12px 6px; gap: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

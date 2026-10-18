@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-      - "manga-v*"
 
 permissions:
   contents: write
@@ -86,20 +85,7 @@ jobs:
             exit 0
           fi
 
-          jq -n --arg commits "$COMMITS" '{
-            model: "deepseek-v4-flash",
-            max_tokens: 400,
-            thinking: {type: "disabled"},
-            messages: [{
-              role: "user",
-              content: "用2-3句简洁中文总结以下提交内容，只描述用户可感知的功能变化。忽略CI、构建、工具链、bug修复类提交。\n\n\($commits)"
-            }]
-          }' > /tmp/payload.json
-
-          curl -s https://api.deepseek.com/anthropic/v1/messages \
-            -H "x-api-key: ${{ secrets.DEEPSEEK_API_KEY }}" \
-            -H "content-type: application/json" \
-            -d @/tmp/payload.json | jq -r '.content[] | select(.type == "text") | .text' > release_notes.md
+          printf '%s\n' "$COMMITS" | sed 's/^/- /' > release_notes.md
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

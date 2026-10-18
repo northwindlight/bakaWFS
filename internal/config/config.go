@@ -28,6 +28,8 @@ type Config struct {
 	AuditLogPath    string `yaml:"audit_log"`
 	CorsEnabled     bool   `yaml:"cors_enabled"`
 	AuthMode        bool   `yaml:"auth_mode"`
+	MangaMode       bool   `yaml:"manga_mode"`
+	TrashDir        string `yaml:"trash_dir"`
 }
 
 func (c *Config) HttpsEnabled() bool { return c.HttpsPort != PortDisabled }
@@ -81,6 +83,12 @@ cors_enabled: false
 
 # 鉴权模式。true = 所有接口（含浏览/下载）均需登录；false = 开放模式（仅写操作需登录）
 auth_mode: false
+
+# 漫画模式会生成缩略图并向原图嵌入哈希元数据，默认关闭
+manga_mode: false
+
+# 删除暂存区：留空使用 file_dir + ".bakawfs-trash"。须与文件区同盘且在公开目录外
+trash_dir: ""
 `
 
 // defaultUsersConfig 首次启动写入。

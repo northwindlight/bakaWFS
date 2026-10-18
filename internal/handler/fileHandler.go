@@ -93,16 +93,16 @@ func (h *FileHandler) HandleTree(w http.ResponseWriter, r *http.Request) {
 
 // HandleThumb 返回 /thumb/<相对路径> 对应文件的 LQIP 缩略图（JPEG）。
 func (h *FileHandler) HandleThumb(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.MangaMode || h.thumb == nil {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	rel := strings.TrimPrefix(r.URL.Path, "/thumb/")
-	decoded, err := url.PathUnescape(rel)
-	if err != nil {
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
+	// net/http 已解码 URL.Path；二次解码会破坏带 % 的合法文件名。
+	decoded := strings.TrimPrefix(r.URL.Path, "/thumb/")
 	if err := fileutil.ValidatePath(decoded); err != nil {
 		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
 		return
@@ -138,6 +138,10 @@ const thumbBatchMax = 500
 //
 // 生成失败的图直接跳过（不计入 entry），前端据此回退占位图标。
 func (h *FileHandler) HandleThumbBatch(w http.ResponseWriter, r *http.Request) {
+	if !h.cfg.MangaMode || h.thumb == nil {
+		http.NotFound(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
@@ -564,6 +568,10 @@ func (h *FileHandler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := fileutil.ValidatePath(req.Path); err != nil {
 		http.Error(w, "Bad Request: Forbidden path", http.StatusBadRequest)
+		return
+	}
+	if filepath.Clean(req.Path) == "." {
+		http.Error(w, "Bad Request: Cannot delete storage root", http.StatusBadRequest)
 		return
 	}
 	targetPath := filepath.Join(h.cfg.DirPath, req.Path)

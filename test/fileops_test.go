@@ -13,7 +13,7 @@ import (
 func newTestQueue(t *testing.T) *fileops.Queue {
 	t.Helper()
 	logger := slog.New(slog.DiscardHandler)
-	q, err := fileops.New(logger, "")
+	q, err := fileops.New(logger, "", t.TempDir())
 	if err != nil {
 		t.Fatalf("New queue: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestQueueAuditLog(t *testing.T) {
 	logPath := filepath.Join(dir, "audit.log")
 
 	logger := slog.New(slog.DiscardHandler)
-	q, err := fileops.New(logger, logPath)
+	q, err := fileops.New(logger, logPath, t.TempDir())
 	if err != nil {
 		t.Fatalf("New queue with audit: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestQueueAuditLogInjection(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "audit.log")
 	logger := slog.New(slog.DiscardHandler)
-	q, err := fileops.New(logger, logPath)
+	q, err := fileops.New(logger, logPath, t.TempDir())
 	if err != nil {
 		t.Fatalf("New queue with audit: %v", err)
 	}

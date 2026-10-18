@@ -6,6 +6,8 @@
 package main
 
 import (
+	"bakaWFS/internal/config"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,10 +20,18 @@ import (
 )
 
 func main() {
-	const (
-		dirPath  = "files"       // 与 config.yaml 的 file_dir 一致
-		cacheDir = ".thumbcache" // 与服务一致
-	)
+	configPath := flag.String("config", "config.yaml", "服务配置文件")
+	flag.Parse()
+	cfg, err := config.LoadYAML[config.Config](*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if !cfg.MangaMode {
+		fmt.Fprintln(os.Stderr, "须显式开启 manga_mode，缩略图会向原图嵌入哈希元数据")
+		os.Exit(1)
+	}
+	dirPath, cacheDir := cfg.DirPath, ".thumbcache"
 
 	gen, err := thumb.New(cacheDir)
 	if err != nil {

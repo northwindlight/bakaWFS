@@ -259,22 +259,28 @@ func startServer(logger *slog.Logger, output io.Writer, stopCh <-chan struct{}) 
 		return fmt.Errorf("清理临时目录失败: %w", err)
 	}
 
-	queue, err := fileops.New(logger, cfg.AuditLogPath)
+	trashDir, err := cfg.DeletionDir()
 	if err != nil {
-		return fmt.Errorf("初始化审计日志失败: %w", err)
+		return fmt.Errorf("删除暂存目录配置错误: %w", err)
+	}
+	queue, err := fileops.New(logger, cfg.AuditLogPath, trashDir)
+	if err != nil {
+		return fmt.Errorf("初始化文件操作队列失败: %w", err)
 	}
 
 	authSvc := auth.NewAuth(cfg, usersCfg)
 	downloader := task.NewDownloader(cfg.DownloadWorkers, logger, queue)
 	downloader.Start()
 
-	thumbCacheDir := filepath.Join(".", ".thumbcache")
-	thumbGen, err := thumb.New(thumbCacheDir)
-	if err != nil {
-		return fmt.Errorf("初始化缩略图缓存失败: %w", err)
+	var thumbGen *thumb.Generator
+	if cfg.MangaMode {
+		thumbGen, err = thumb.New(filepath.Join(".", ".thumbcache"))
+		if err != nil {
+			return fmt.Errorf("初始化缩略图缓存失败: %w", err)
+		}
 	}
 
-	ah := handler.NewAuthHandler(authSvc, logger, cfg.AuthMode)
+	ah := handler.NewAuthHandler(authSvc, logger, cfg.AuthMode, cfg.MangaMode)
 	fh := handler.NewFileHandler(cfg, logger, downloader, queue, thumbGen)
 
 	authMW := handler.AuthMiddleware(authSvc, logger)
