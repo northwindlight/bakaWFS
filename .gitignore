@@ -19,3 +19,6 @@ rpihtml/
 
 # 前端浏览器回归工具
 node_modules/
+
+# 本地生成的云函数部署包
+dist/
