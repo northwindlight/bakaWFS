@@ -86,7 +86,7 @@ npm test
 
 ## API 与维护
 
-[API 文档](bakaWFS_API.md) · [分支收敛与迁移说明](docs/maintenance.md)
+[API 文档](bakaWFS_API.md) · [分支收敛与迁移说明](docs/maintenance.md) · [云函数与对象存储迁移计划（待实施）](docs/serverless-migration-plan.md)
 
 `GET /api/config` 返回 `auth_mode` 和 `manga_mode`。`/thumb/`、`/thumbs` 仅在漫画模式开放；其他文件 API 两种模式共用。文件系统始终是唯一状态来源，无索引数据库或持久会话。
 
