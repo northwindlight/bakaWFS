@@ -1,0 +1,279 @@
+{
+  "tests": [
+    {
+      "check": "metadata bucket type",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "x-cos-bucket-arch": "OFS",
+        "x-cos-bucket-region": "ap-guangzhou",
+        "x-cos-request-id": "NmFkYjk0MTZfNGJhZWU5MDlfYmY1Yl80ODI2ODM4"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "configure CORS",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "x-cos-request-id": "NmFkYjk0MTdfOGEzMTI3MGJfZmRjZl8yOTI3MjRl"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "CORS preflight",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "Access-Control-Allow-Headers": "authorization,content-type,content-md5",
+        "Access-Control-Allow-Methods": "PUT,POST,GET,HEAD",
+        "Access-Control-Allow-Origin": "http://127.0.0.1:18879",
+        "Access-Control-Expose-Headers": "ETag,x-cos-request-id",
+        "x-cos-request-id": "NmFkYjk0MThfOTA4ZTIwMDlfMWY0NzRfMjdkYzEyMg=="
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "write nested page",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "ETag": "\"f97c5d29941bfb1b2fdab0874906ab82\"",
+        "x-cos-hash-crc64ecma": "11127386245692450174",
+        "x-cos-request-id": "NmFkYjk0MTlfODdkMWY0MDlfMjQ1Y180ODI2ODc4"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "write second page",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "ETag": "\"b8a9f715dbb64fd5c56e7783c6820a61\"",
+        "x-cos-hash-crc64ecma": "239298213876192093",
+        "x-cos-request-id": "NmFkYjk0MWFfZmUxNDZiMGJfODFhZl8yNzBhMTk2"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "directory rename",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "x-cos-request-id": "NmFkYjk0MWNfOGRkNDZiMGJfZGUxN180YTMwZWFl"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "old subtree gone",
+      "passed": true,
+      "status": 404,
+      "expected": 404,
+      "headers": {},
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "new subtree first page",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "3",
+        "ETag": "\"f97c5d29941bfb1b2fdab0874906ab82\"",
+        "x-cos-hash-crc64ecma": "11127386245692450174",
+        "x-cos-inode-id": "5",
+        "x-cos-inode-status": "STANDARD",
+        "x-cos-object-type": "appendable",
+        "x-cos-request-id": "NmFkYjk0MWRfNjcwZWMwOV8yYmU3XzIxOGMzYzM="
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "new subtree second page",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "3",
+        "ETag": "\"b8a9f715dbb64fd5c56e7783c6820a61\"",
+        "x-cos-hash-crc64ecma": "239298213876192093",
+        "x-cos-inode-id": "9",
+        "x-cos-inode-status": "STANDARD",
+        "x-cos-object-type": "appendable",
+        "x-cos-request-id": "NmFkYjk0MWVfYTVjZDNjMDlfOTg0ZV8yNWRiZjVj"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "prepare concurrent rename",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "ETag": "\"2e2a7a2e57d1578bf33a559b20c463f6\"",
+        "x-cos-hash-crc64ecma": "11866091197677267113",
+        "x-cos-request-id": "NmFkYjk0MWZfODcyZjlhMWVfMmJjMjdfMjNmMTc5Mg=="
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "two competing directory renames",
+      "passed": true,
+      "statuses": [
+        200,
+        404
+      ]
+    },
+    {
+      "check": "detach directory into trash",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "x-cos-request-id": "NmFkYjk0MjFfN2NmNzRjMGJfMjhmYmZfMjU1NmE0Ng=="
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "deleted subtree invisible",
+      "passed": true,
+      "status": 404,
+      "expected": 404,
+      "headers": {},
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "detached subtree retained",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "3",
+        "ETag": "\"b8a9f715dbb64fd5c56e7783c6820a61\"",
+        "x-cos-hash-crc64ecma": "239298213876192093",
+        "x-cos-inode-id": "9",
+        "x-cos-inode-status": "STANDARD",
+        "x-cos-object-type": "appendable",
+        "x-cos-request-id": "NmFkYjk0MjNfYzYyZjlhMWVfOWYxZl8yYThmYzkw"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "recursive trash cleanup",
+      "passed": true,
+      "status": 204,
+      "expected": 204,
+      "headers": {
+        "x-cos-request-id": "NmFkYjk0MjRfNGI4ZDFiMDlfMmM2YTRfMjc4NzRjMw=="
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "upload staged file",
+      "passed": true,
+      "status": 200,
+      "expected": 200,
+      "headers": {
+        "Content-Length": "0",
+        "ETag": "\"7c6c2e5d48ab37a007cbf70d3ea25fa4\"",
+        "x-cos-hash-crc64ecma": "10365137505609964760",
+        "x-cos-request-id": "NmFkYjk0MjVfYTMwMmMwYl8yYmZiYl8yYWQwZTFj"
+      },
+      "error": null,
+      "message": null
+    },
+    {
+      "check": "rename into absent parent",
+      "status": 200,
+      "headers": {
+        "Content-Length": "0",
+        "x-cos-request-id": "NmFkYjk0MjZfODRkMGU5MDlfOWQyXzI4MzFhMjI="
+      },
+      "error": null,
+      "message": null
+    }
+  ],
+  "chromium_cors_upload": {
+    "status": 200,
+    "etag": "\"709e1e51285eb680f66635659cc22bc5\"",
+    "requestId": "NmFkYjk0YzdfNWI1MTk1MWVfMzYyZWFfMTUwYjVlZQ=="
+  },
+  "forbid_overwrite_race": [
+    {
+      "writer": 0,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 1,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 2,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 3,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 4,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 5,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 6,
+      "status": 200,
+      "error": null,
+      "message": null
+    },
+    {
+      "writer": 7,
+      "status": 200,
+      "error": null,
+      "message": null
+    }
+  ]
+}

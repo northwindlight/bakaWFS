@@ -1,0 +1,42 @@
+{
+  "cleanup_ok": true,
+  "insert_only": true,
+  "key": "(isolated random test key, removed after test)",
+  "results": [
+    {
+      "writer": 0,
+      "status": 614
+    },
+    {
+      "writer": 1,
+      "status": 200
+    },
+    {
+      "writer": 2,
+      "status": 614
+    },
+    {
+      "writer": 3,
+      "status": 614
+    },
+    {
+      "writer": 4,
+      "status": 614
+    },
+    {
+      "writer": 5,
+      "status": 614
+    },
+    {
+      "writer": 6,
+      "status": 614
+    },
+    {
+      "writer": 7,
+      "status": 614
+    }
+  ],
+  "stat_ok": true,
+  "stored_bytes": 24,
+  "winners": 1
+}

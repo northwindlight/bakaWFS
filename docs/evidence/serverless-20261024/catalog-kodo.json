@@ -1,0 +1,15 @@
+{
+  "cleanup_deleted": 8,
+  "cleanup_ok": true,
+  "concurrent_nodes": 5,
+  "concurrent_revision": 4,
+  "final_nodes": 5,
+  "final_revision": 7,
+  "independent_clients": 4,
+  "late_upload_rejected": true,
+  "lost_reply_recovered": true,
+  "passed": true,
+  "prefix": "(isolated random test prefix, removed after test)",
+  "semantic_rejection_idempotent": true,
+  "synthetic_data_only": true
+}

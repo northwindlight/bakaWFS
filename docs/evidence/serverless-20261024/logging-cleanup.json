@@ -1,0 +1,13 @@
+{
+  "collection_disabled": true,
+  "topic_deleted": true,
+  "topic_absent_after_delete": true,
+  "historical_logs_deleted": true,
+  "request_id": "6307e776-ba9e-4073-9a70-2df9b88804cf",
+  "code_updated": true,
+  "health_status": 200,
+  "cls_logset_empty": true,
+  "cls_topic_empty": true,
+  "ignore_system_log": true,
+  "cls_topics_after_health_call": 0
+}

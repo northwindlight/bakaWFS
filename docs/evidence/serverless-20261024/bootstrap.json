@@ -1,0 +1,46 @@
+{
+  "region": "ap-guangzhou",
+  "checks": [
+    {
+      "path": "/healthz",
+      "expected": 200,
+      "actual": 200,
+      "instance": "VA3Z3WNAYNFYQQJVHZ3NS2MTBW"
+    },
+    {
+      "path": "/api/config",
+      "expected": 200,
+      "actual": 200,
+      "instance": "VA3Z3WNAYNFYQQJVHZ3NS2MTBW"
+    },
+    {
+      "path": "/readyz",
+      "expected": 503,
+      "actual": 503,
+      "instance": "VA3Z3WNAYNFYQQJVHZ3NS2MTBW"
+    },
+    {
+      "path": "/list",
+      "expected": 404,
+      "actual": 404,
+      "instance": "VA3Z3WNAYNFYQQJVHZ3NS2MTBW"
+    },
+    {
+      "role": "admin",
+      "login": 200,
+      "refresh": 200,
+      "different_ua": 401
+    },
+    {
+      "role": "guest",
+      "login": 200,
+      "refresh": 200,
+      "different_ua": 401
+    },
+    {
+      "preflight": 200,
+      "allow_origin": "*"
+    }
+  ],
+  "storage_connected": false
+}

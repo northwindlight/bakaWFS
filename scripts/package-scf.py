@@ -31,7 +31,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='bakawfs-scf-') as temporary:
         binary = Path(temporary) / 'main'
         for name, target in (('bakawfs-scf', './cmd/scf'), ('go-probe', './cmd/scf-probe')):
-            subprocess.run(['go', 'build', '-trimpath', '-ldflags=-s -w', '-o', str(binary), target], cwd=ROOT, env=env, check=True)
+            subprocess.run(['go', 'build', '-trimpath', '-buildvcs=false', '-ldflags=-s -w', '-o', str(binary), target], cwd=ROOT, env=env, check=True)
             path = output / (name + '.zip')
             write_zip(path, 'main', binary.read_bytes(), 0o100755)
             packages.append({'file': path.name, 'runtime': 'Go1', 'handler': 'main', 'architecture': 'x86_64'})

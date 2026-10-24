@@ -1,0 +1,241 @@
+{
+  "region": "ap-guangzhou",
+  "memory_mb": 128,
+  "preprovisioned_concurrency": false,
+  "samples": [
+    {
+      "runtime": "go",
+      "version": "2",
+      "phase": "new_version_first_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3239936,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.057",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:36.163637604Z",
+        "X-BakaWFS-Instance": "ESDWQROTJ6CAUUZLA7BJLQHBAK",
+        "X-BakaWFS-Invocation": "1"
+      },
+      "function_request_id": "1b662482-8e32-4c5e-8fa6-3f07d33e9d78",
+      "coldstart_ms": 49,
+      "init_runtime_ms": 8,
+      "init_function_ms": 41
+    },
+    {
+      "runtime": "go",
+      "version": "2",
+      "phase": "same_version_second_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3162112,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.020",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:36.163637604Z",
+        "X-BakaWFS-Instance": "ESDWQROTJ6CAUUZLA7BJLQHBAK",
+        "X-BakaWFS-Invocation": "2"
+      },
+      "function_request_id": "33a7f783-2056-4ad7-a51f-08a66a68855d"
+    },
+    {
+      "runtime": "node",
+      "version": "1",
+      "phase": "new_version_first_call",
+      "duration_ms": 3,
+      "bill_duration_ms": 3,
+      "memory_bytes": 9650176,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "cec95ae2d4e3250091ec59bfdaa4cf8edc50c27c",
+        "X-BakaWFS-Invocation": "1",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:42.660Z",
+        "X-BakaWFS-Handler-Ms": "0.028"
+      },
+      "function_request_id": "4616d394-27ea-4ee0-8f6e-01900c1ef8f4",
+      "coldstart_ms": 106,
+      "init_runtime_ms": 16,
+      "init_function_ms": 90
+    },
+    {
+      "runtime": "node",
+      "version": "1",
+      "phase": "same_version_second_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 9920512,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "cec95ae2d4e3250091ec59bfdaa4cf8edc50c27c",
+        "X-BakaWFS-Invocation": "2",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:42.660Z",
+        "X-BakaWFS-Handler-Ms": "0.010"
+      },
+      "function_request_id": "6987d6e7-8ec2-4d38-b44b-fb99b416e933"
+    },
+    {
+      "runtime": "go",
+      "version": "3",
+      "phase": "new_version_first_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3235840,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.051",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:49.021893524Z",
+        "X-BakaWFS-Instance": "DDCRQW5I6XRNXSZ7DVWCCKHEFA",
+        "X-BakaWFS-Invocation": "1"
+      },
+      "function_request_id": "0494ab79-6f6e-47d0-896f-195d4227b5d6",
+      "coldstart_ms": 50,
+      "init_runtime_ms": 9,
+      "init_function_ms": 41
+    },
+    {
+      "runtime": "go",
+      "version": "3",
+      "phase": "same_version_second_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3158016,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.017",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:49.021893524Z",
+        "X-BakaWFS-Instance": "DDCRQW5I6XRNXSZ7DVWCCKHEFA",
+        "X-BakaWFS-Invocation": "2"
+      },
+      "function_request_id": "eb29b7de-a7ef-4476-99f5-c0fce2caac24"
+    },
+    {
+      "runtime": "node",
+      "version": "2",
+      "phase": "new_version_first_call",
+      "duration_ms": 3,
+      "bill_duration_ms": 3,
+      "memory_bytes": 9883648,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "c7e9cd7e737c6faac218c6b4ac3585a0eea1c4ca",
+        "X-BakaWFS-Invocation": "1",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:53.804Z",
+        "X-BakaWFS-Handler-Ms": "0.033"
+      },
+      "function_request_id": "f80e45f9-8af1-4389-973d-408a083667cb",
+      "coldstart_ms": 102,
+      "init_runtime_ms": 12,
+      "init_function_ms": 90
+    },
+    {
+      "runtime": "node",
+      "version": "2",
+      "phase": "same_version_second_call",
+      "duration_ms": 3,
+      "bill_duration_ms": 3,
+      "memory_bytes": 10153984,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "c7e9cd7e737c6faac218c6b4ac3585a0eea1c4ca",
+        "X-BakaWFS-Invocation": "2",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:18:53.804Z",
+        "X-BakaWFS-Handler-Ms": "0.009"
+      },
+      "function_request_id": "3609088d-b7c1-4b61-8b99-69c9eef7ef8a"
+    },
+    {
+      "runtime": "go",
+      "version": "4",
+      "phase": "new_version_first_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3256320,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.053",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:19:00.079180444Z",
+        "X-BakaWFS-Instance": "7VYS5KXI5FKTSI3B4VYCI4R2EH",
+        "X-BakaWFS-Invocation": "1"
+      },
+      "function_request_id": "9daf0bd4-c89f-4b0c-b23c-0632db76700c",
+      "coldstart_ms": 48,
+      "init_runtime_ms": 11,
+      "init_function_ms": 37
+    },
+    {
+      "runtime": "go",
+      "version": "4",
+      "phase": "same_version_second_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 3174400,
+      "invoke_result": 0,
+      "headers": {
+        "Cache-Control": "no-store",
+        "Content-Type": "application/json",
+        "X-BakaWFS-Handler-Ms": "0.018",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:19:00.079180444Z",
+        "X-BakaWFS-Instance": "7VYS5KXI5FKTSI3B4VYCI4R2EH",
+        "X-BakaWFS-Invocation": "2"
+      },
+      "function_request_id": "3a17dcb7-0cab-4cd2-9701-be325e03eedd"
+    },
+    {
+      "runtime": "node",
+      "version": "3",
+      "phase": "new_version_first_call",
+      "duration_ms": 49,
+      "bill_duration_ms": 49,
+      "memory_bytes": 9887744,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "597e0efbb397ed2a3bcb57f4c6c77d3fc0cb31dc",
+        "X-BakaWFS-Invocation": "1",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:19:05.404Z",
+        "X-BakaWFS-Handler-Ms": "0.041"
+      },
+      "function_request_id": "af1c2dac-50e3-456d-9c03-5c590cef1042",
+      "coldstart_ms": 101,
+      "init_runtime_ms": 11,
+      "init_function_ms": 90
+    },
+    {
+      "runtime": "node",
+      "version": "3",
+      "phase": "same_version_second_call",
+      "duration_ms": 1,
+      "bill_duration_ms": 1,
+      "memory_bytes": 9940992,
+      "invoke_result": 0,
+      "headers": {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-BakaWFS-Instance": "597e0efbb397ed2a3bcb57f4c6c77d3fc0cb31dc",
+        "X-BakaWFS-Invocation": "2",
+        "X-BakaWFS-Initialized-At": "2026-10-23T17:19:05.404Z",
+        "X-BakaWFS-Handler-Ms": "0.010"
+      },
+      "function_request_id": "fd33ab0a-fdca-49f9-a7cc-0695b6f14d30"
+    }
+  ]
+}

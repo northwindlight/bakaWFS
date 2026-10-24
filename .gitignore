@@ -22,3 +22,4 @@ node_modules/
 
 # 本地生成的云函数部署包
 dist/
+__pycache__/
