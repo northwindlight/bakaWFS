@@ -4,19 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
-	"image"
-	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"bakaWFS/internal/catalog"
 	"bakaWFS/internal/task"
-	"bakaWFS/internal/thumb"
 	"github.com/qiniu/go-sdk/v7/storagev2/apis"
 	complete "github.com/qiniu/go-sdk/v7/storagev2/apis/resumable_upload_v2_complete_multipart_upload"
 	"github.com/qiniu/go-sdk/v7/storagev2/uptoken"
@@ -206,6 +201,28 @@ func (h *Service) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	_, e := h.Kodo.Stat(r.Context(), j.ObjectKey)
 	if errors.Is(e, ErrObjectMissing) && j.UploadID != "" {
+		if len(q.Parts) == 0 {
+			marker := int64(0)
+			for {
+				page, err := h.Kodo.api.ResumableUploadV2ListParts(r.Context(), &apis.ResumableUploadV2ListPartsRequest{BucketName: h.Kodo.Bucket, ObjectName: &j.ObjectKey, UploadId: j.UploadID, UpToken: uptoken.NewParser(h.Kodo.UploadToken(j.ObjectKey, j.Size, 3600)), MaxParts: 1000, PartNumberMarker: marker}, nil)
+				if err != nil {
+					failure(w, 503, "multipart_list_failed")
+					return
+				}
+				for _, part := range page.Parts {
+					q.Parts = append(q.Parts, complete.PartInfo{PartNumber: part.PartNumber, Etag: part.Etag})
+				}
+				if len(q.Parts) > 10000 {
+					failure(w, 400, "too_many_parts")
+					return
+				}
+				if page.PartNumberMarker == 0 {
+					break
+				}
+				marker = page.PartNumberMarker
+			}
+			sort.Slice(q.Parts, func(i, j int) bool { return q.Parts[i].PartNumber < q.Parts[j].PartNumber })
+		}
 		expected := (j.Size + uploadPartSize(j.Size) - 1) / uploadPartSize(j.Size)
 		if int64(len(q.Parts)) != expected {
 			failure(w, 400, "incomplete_parts")
@@ -289,40 +306,4 @@ func (h *Service) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	failure(w, 404, "job_not_found")
-}
-func (h *Service) makeThumbnails(ctx context.Context, n catalog.Node) error {
-	if !thumb.Supported(n.Name) || n.Size > 128*1024*1024 {
-		return fmt.Errorf("thumbnail input unsupported")
-	}
-	dir, e := os.MkdirTemp("", "cloud-thumb-")
-	if e != nil {
-		return e
-	}
-	defer os.RemoveAll(dir)
-	src, e := h.Kodo.Get(ctx, n.ObjectKey)
-	if e != nil {
-		return e
-	}
-	defer src.Close()
-	filename := filepath.Join(dir, "input"+filepath.Ext(n.Name))
-	f, e := os.Create(filename)
-	if e != nil {
-		return e
-	}
-	written, e := io.Copy(f, io.LimitReader(src, 128*1024*1024+1))
-	closeErr := f.Close()
-	if e != nil || closeErr != nil || written != n.Size {
-		return fmt.Errorf("thumbnail download failed")
-	}
-	imageFile, e := os.Open(filename)
-	if e != nil {
-		return e
-	}
-	dimensions, _, e := image.DecodeConfig(imageFile)
-	imageFile.Close()
-	if e != nil || dimensions.Width <= 0 || dimensions.Height <= 0 || int64(dimensions.Width)*int64(dimensions.Height) > 40_000_000 {
-		return fmt.Errorf("thumbnail dimensions exceed cloud memory budget")
-	}
-	_, e = h.Kodo.ImportThumbnails(ctx, filename, strings.TrimPrefix(n.ObjectKey, "objects/"), filepath.Join(dir, "cache"))
-	return e
 }

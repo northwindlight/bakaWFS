@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"sort"
@@ -180,7 +181,7 @@ func (h *Service) List(w http.ResponseWriter, r *http.Request) {
 				out.Children = []*treeNode{}
 			}
 		}
-		if n.Kind == "file" && depth == 2 {
+		if n.Kind == "file" && n.Size > 0 && depth == 2 {
 			out.URL, _ = h.Kodo.URL(r.Context(), n.ObjectKey, "", time.Hour)
 		}
 		return out
@@ -197,6 +198,20 @@ func (h *Service) File(w http.ResponseWriter, r *http.Request) {
 		failure(w, 404, "file_not_found")
 		return
 	}
+	// CDN Range backends can reject zero-length objects with 416 even for a
+	// normal GET. An authenticated empty response has no file bytes to proxy.
+	if n.Size == 0 {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": n.Name}))
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Header.Get("Range") != "" {
+			w.Header().Set("Content-Range", "bytes */0")
+			w.WriteHeader(416)
+		} else {
+			w.WriteHeader(200)
+		}
+		return
+	}
 	command := ""
 	if r.URL.Query().Get("download") == "1" {
 		command = "attname=" + url.QueryEscape(n.Name)
@@ -208,71 +223,6 @@ func (h *Service) File(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, u, 302)
-}
-func thumbKey(n catalog.Node, size string) string {
-	return "thumbs/" + strings.TrimPrefix(n.ObjectKey, "objects/") + "/" + size + ".jpg"
-}
-func (h *Service) Thumb(w http.ResponseWriter, r *http.Request) {
-	if !h.Manga {
-		failure(w, 404, "not_found")
-		return
-	}
-	s := h.current(w, r)
-	if s == nil {
-		return
-	}
-	n, e := resolve(s, strings.TrimPrefix(r.URL.Path, "/thumb/"))
-	if e != nil || n.Kind != "file" {
-		failure(w, 404, "file_not_found")
-		return
-	}
-	size := "list"
-	if r.URL.Query().Get("size") == "mid" {
-		size = "mid"
-	}
-	key := thumbKey(n, size)
-	if _, e = h.Kodo.Stat(r.Context(), key); errors.Is(e, ErrObjectMissing) {
-		e = h.makeThumbnails(r.Context(), n)
-	}
-	if e != nil {
-		failure(w, 404, "thumbnail_unavailable")
-		return
-	}
-	u, e := h.Kodo.URL(r.Context(), key, "", time.Hour)
-	if e != nil {
-		failure(w, 503, "object_unavailable")
-		return
-	}
-	http.Redirect(w, r, u, 302)
-}
-func (h *Service) Thumbs(w http.ResponseWriter, r *http.Request) {
-	if !h.Manga {
-		failure(w, 404, "not_found")
-		return
-	}
-	var q struct {
-		Paths []string `json:"paths"`
-	}
-	if decode(r, &q) != nil || len(q.Paths) > 100 {
-		failure(w, 400, "invalid_paths")
-		return
-	}
-	s := h.current(w, r)
-	if s == nil {
-		return
-	}
-	out := []map[string]string{}
-	for _, p := range q.Paths {
-		n, e := resolve(s, p)
-		if e != nil || n.Kind != "file" {
-			continue
-		}
-		u, e := h.Kodo.URL(r.Context(), thumbKey(n, "list"), "", time.Hour)
-		if e == nil {
-			out = append(out, map[string]string{"path": p, "url": u})
-		}
-	}
-	respond(w, 200, out)
 }
 
 type mutationRequest struct {
@@ -375,10 +325,7 @@ func (h *Service) FinishJob(ctx context.Context, j catalog.Job) (catalog.Result,
 		return catalog.Result{}, ErrObjectMismatch
 	}
 	result, e := h.Catalog.Apply(ctx, catalog.Operation{ID: "finish:" + j.ID, Actor: j.Actor, Kind: "job_finish", JobID: j.ID, ObjectKey: j.ObjectKey, Size: info.Size, Hash: info.Hash})
-	if e == nil && result.Error == "" && h.Manga {
-		n := catalog.Node{ID: result.NodeID, Name: j.Name, ObjectKey: j.ObjectKey, Size: info.Size, Hash: info.Hash, Kind: "file"}
-		h.makeThumbnails(ctx, n)
-	}
+
 	return result, e
 }
 

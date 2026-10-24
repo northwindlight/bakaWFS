@@ -2,7 +2,7 @@
 
 `cmd/scf` 是 Go 事件函数，通过官方 `cloudfunction.Start` 接收函数 URL event。当前提供 `/api/config`、`/login`、`/verify`、`/healthz`、`/readyz`，不启动自托管 HTTP 服务、不读本地生产配置、不生成用户、不扫描文件、不启动内存下载队列。
 
-文件数据不经过此适配层。当前只接函数 URL 的 `httpMethod/path/headers/queryString/body` 协议，不宣称兼容 API Gateway 的 base64 二进制协议。控制请求体上限 256 KiB，原有登录上限继续为 10 KiB；用户标识、UA、query token 及请求截止时间传给原有中间件。
+文件数据不经过此适配层。当前只接函数 URL 的 `httpMethod/path/headers/queryString/body` 协议，不宣称兼容 API Gateway 的 base64 二进制协议。`path` 按函数 URL 已解码字段重建 URL，不再次把 `%`、`#`、`?` 当 URI 语法；queryString 单独编码。控制请求体上限 256 KiB，原有登录上限继续为 10 KiB；用户标识、UA、query token 及请求截止时间传给原有中间件。
 
 ## 环境设置
 

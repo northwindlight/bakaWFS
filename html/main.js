@@ -495,6 +495,14 @@ createApp({
             return `${API_BASE}/files/${pathParts.map(encodeURIComponent).join('/')}`;
         };
 
+        const previewURL = (relPath) => {
+            const token = localStorage.getItem('baka_token');
+            const query = new URLSearchParams();
+            if (token) query.set('token', token);
+            if (!cloudMode.value) query.set('size', 'mid');
+            const enc = relPath.split('/').map(encodeURIComponent).join('/');
+            return `${API_BASE}/${cloudMode.value ? 'files' : 'thumb'}/${enc}?${query}`;
+        };
         const getThumbUrl = (fileName) => {
             if (!currentDir.value) return '';
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
@@ -709,7 +717,7 @@ createApp({
             if (cloudMode.value && !img.dataset.retried) {
                 img.dataset.retried = '1';
                 const token = localStorage.getItem('baka_token');
-                img.src = getThumbUrl(name) + '?size=list' + (token ? '&token=' + encodeURIComponent(token) : '');
+                img.src = previewURL([...pathStack.value.map(p => p.name), name].join('/'));
             } else { img.style.visibility = 'hidden'; }
         };
         const _thumbBlobs = [];           // 已创建的 blob URL，切目录时释放
@@ -767,6 +775,10 @@ createApp({
             const prefix = pathStack.value.map(p => p.name).join('/');
             const imgs = dir.children.filter(c => c.type === 'file' && isImageFile(c.name));
             if (!imgs.length) return;
+            if (cloudMode.value) {
+                thumbMap.value = Object.fromEntries(imgs.map(file => [file.name, file.url || previewURL(prefix ? prefix + '/' + file.name : file.name)]));
+                return;
+            }
 
             for (let i = 0; i < imgs.length; i += THUMB_BATCH) {
                 if (seq !== _thumbSeq) return; // 已切到别的目录，停止
@@ -833,7 +845,7 @@ createApp({
             const next = { ...coverMap.value };
             for (const relPath of paths) {
                 const enc = relPath.split('/').map(encodeURIComponent).join('/');
-                next[pathToKey[relPath]] = `${API_BASE}/thumb/${enc}?size=mid${tokenQ}`;
+                next[pathToKey[relPath]] = previewURL(relPath);
             }
             coverMap.value = next;
         };
@@ -859,7 +871,7 @@ createApp({
                 const cover = bookCover(p.node);
                 if (!cover) continue;
                 const enc = (p.key + '/' + cover).split('/').map(encodeURIComponent).join('/');
-                next[p.key] = `${API_BASE}/thumb/${enc}?size=mid${tokenQ}`;
+                next[p.key] = previewURL(p.key + '/' + cover);
             }
             searchCoverMap.value = next;
         };
@@ -988,7 +1000,7 @@ createApp({
             const start = Math.max(0, centerIdx - PRELOAD_BEHIND);
             const end   = Math.min(list.length - 1, centerIdx + PRELOAD_AHEAD);
             for (let i = start; i <= end; i++) {
-                if (mangaMode.value) getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).then(blobUrl => {
+                if (mangaMode.value && !cloudMode.value) getImageBlobUrl(`${getThumbUrl(list[i].name)}?size=mid`).then(blobUrl => {
                     const img = new Image(); img.src = blobUrl; // 触发浏览器解码
                 }).catch(() => {});
                 getImageBlobUrl(getFileUrl(list[i].name)).catch(() => {});
@@ -1028,6 +1040,17 @@ createApp({
             const name = list[idx].name;
             const midUrl  = `${getThumbUrl(name)}?size=mid`;
             const fullUrl = getFileUrl(name);
+            if (cloudMode.value) {
+                viewerCurrentImageUrl.value = '';
+                try {
+                    const original = await getImageBlobUrl(fullUrl);
+                    if (seq !== _viewerSeq) return;
+                    await decodeThenSet(original);
+                    if (seq === _viewerSeq) viewerCurrentImageUrl.value = original;
+                    preloadImages(list, idx);
+                } catch (_) {}
+                return;
+            }
 
             // 原图已在缓存（顺序翻页时被 preload 预取过，强网常态）→ 直接上原图、跳过中图，
             // 消除"先糊一下再清晰"的无谓闪烁。中图占位只是弱网/首图/随机跳转的保底。

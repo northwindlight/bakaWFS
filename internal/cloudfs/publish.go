@@ -149,7 +149,14 @@ func (k *Kodo) cdnRequest(ctx context.Context, method, domain, suffix string, bo
 	}
 	defer response.Body.Close()
 	var result map[string]any
-	if json.NewDecoder(io.LimitReader(response.Body, 1024*1024)).Decode(&result) != nil || response.StatusCode != 200 {
+	decodeErr := json.NewDecoder(io.LimitReader(response.Body, 1024*1024)).Decode(&result)
+	if response.StatusCode == 404 || result["code"] == float64(404001) || result["code"] == float64(400001) {
+		return nil, errCDNMissing
+	}
+	if decodeErr != nil {
+		return nil, fmt.Errorf("invalid CDN configuration response")
+	}
+	if response.StatusCode != 200 {
 		return nil, fmt.Errorf("CDN configuration rejected: HTTP %d, code %v, reason %v", response.StatusCode, result["code"], "see provider API code")
 	}
 	if code, ok := result["code"].(float64); ok && code != 200 {

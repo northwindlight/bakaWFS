@@ -32,7 +32,7 @@ const root = path.resolve(__dirname, '../..');
     page = await browser.newPage({ viewport: { width: 1280, height: 850 } });
     page.setDefaultTimeout(90000);
     const hosts = new Set(), errors = [], dialogs = [], providerAuthorization = [];
-    let partRequests = 0, interrupted = false;
+    let partRequests = 0, interrupted = false, thumbnailRequests = 0;
     page.on('console', message => { if (message.type() === 'error') console.log('Browser error:', message.text().replace(/https?:\/\/[^\s]+/g, '[URL]')); });
     page.on('pageerror', error => errors.push(error.name + ': ' + error.message.replace(/https?:\/\/[^\s]+/g, '[URL]')));
     page.on('dialog', async dialog => { dialogs.push(dialog.message()); console.log('UI dialog:', dialog.message().replace(/https?:\/\/[^\s]+/g, '[URL]')); await dialog.accept(); });
@@ -40,7 +40,8 @@ const root = path.resolve(__dirname, '../..');
     page.on('requestfailed', request => { const u = new URL(request.url()); console.log('Network failure:', u.hostname, request.failure()?.errorText); });
     page.on('request', request => {
       const url = new URL(request.url()); hosts.add(url.hostname);
-      if (url.hostname.includes('qiniu') && request.headers().authorization?.startsWith('Bearer ')) providerAuthorization.push(url.hostname);
+      if (url.pathname.startsWith('/thumb')) thumbnailRequests++;
+      if (url.hostname !== new URL(credentials.url).hostname && url.hostname !== '127.0.0.1' && request.headers().authorization?.startsWith('Bearer ')) providerAuthorization.push(url.hostname);
       if (request.method() === 'PUT' && url.pathname.includes('/uploads/')) partRequests++;
     });
     // Inject one XHR network-error event before any part bytes are sent.
@@ -85,17 +86,27 @@ const root = path.resolve(__dirname, '../..');
     await page.locator('.file-card').filter({ hasText: '中文 #100%.txt' }).click();
     await page.getByText('浏览器直接访问七牛私有文件', { exact: true }).waitFor();
     await page.keyboard.press('Escape');
+    const nativeDownload = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('native download timed out')), 90000);
+      const done = download => { clearTimeout(timer); resolve(download); };
+      page.once('download', done); page.context().once('page', popup => popup.once('download', done));
+    });
+    await page.locator('.file-card').filter({ hasText: '中文 #100%.txt' }).getByRole('button', { name: '下载', exact: true }).click();
+    const downloaded = await nativeDownload;
+    assert.equal(downloaded.suggestedFilename(), '中文 #100%.txt');
+    assert.equal(await fs.readFile(await downloaded.path(), 'utf8'), '浏览器直接访问七牛私有文件');
+    console.log('PASS: native download preserves Unicode filename and bytes');
     await upload('multipart-browser.bin', 'application/octet-stream', Buffer.alloc(11 * 1024 * 1024, 42));
     interrupted = await page.evaluate(() => globalThis.__partFailureInjected);
     assert.ok(interrupted && partRequests >= 2, 'native part retry was not exercised');
     // Imported synthetic image and both derivative tiers must work in Chromium.
     const imageResult = await page.evaluate(async api => {
       const token = localStorage.getItem('baka_token');
-      const response = await fetch(api + '/thumb/' + encodeURIComponent('样本书') + '/1.png?size=mid', { headers: { Authorization: 'Bearer ' + token } });
+      const response = await fetch(api + '/files/' + encodeURIComponent('样本书') + '/1.png', { headers: { Authorization: 'Bearer ' + token } });
       const blob = await response.blob(); const bitmap = await createImageBitmap(blob);
       return { status: response.status, type: blob.type, width: bitmap.width, height: bitmap.height, host: new URL(response.url).hostname };
     }, credentials.url);
-    assert.equal(imageResult.status, 200); assert.ok(imageResult.width > 0 && imageResult.height > 0); assert.ok(imageResult.host.endsWith('.qiniucs.com'));
+    assert.equal(imageResult.status, 200); assert.ok(imageResult.width > 0 && imageResult.height > 0); assert.ok(imageResult.host === 'manga-data.northwind.site' || imageResult.host.endsWith('.qiniucs.com')); assert.equal(thumbnailRequests, 0, 'cloud UI requested thumbnails');
     for (const width of [1280, 390, 320]) {
       await page.setViewportSize({ width, height: 850 });
       await page.screenshot({ path: path.join(output, `cloud-${width}.png`), fullPage: true });
@@ -107,7 +118,7 @@ const root = path.resolve(__dirname, '../..');
     }, { api: credentials.url, folder });
     assert.equal(cleanup, 200); assert.deepEqual(errors, []); assert.deepEqual(dialogs, []); assert.deepEqual(providerAuthorization, []);
     assert.ok(!hosts.has('www.northwind.site'), 'old self-hosted API was called');
-    const report = { passed: true, widths: [1280, 390, 320], nativePartRetry: true, directPrivateRead: true, thumbnails: imageResult, hosts: [...hosts].sort(), jwtSentToStorage: false, testedAt: new Date().toISOString() };
+    const report = { passed: true, widths: [1280, 390, 320], nativePartRetry: true, nativeDownload: true, directPrivateRead: true, originalImage: imageResult, thumbnails: false, hosts: [...hosts].sort(), jwtSentToStorage: false, testedAt: new Date().toISOString() };
     await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report));
   } catch (error) { if (page) { await page.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {}); await fs.writeFile(path.join(output, 'failure.txt'), await page.locator('body').innerText().catch(() => '')).catch(() => {}); } throw error; } finally { if (browser) await browser.close(); await new Promise(resolve => server.close(resolve)); }

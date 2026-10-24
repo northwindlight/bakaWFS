@@ -84,6 +84,8 @@ def deploy(args):
     if not config.get('secret') or not users.get('users'):
         raise CloudError('explicit users and JWT secret are required')
     settings = {'BAKAWFS_JWT_SECRET': config['secret'], 'BAKAWFS_USERS_YAML': yaml.safe_dump({'users': users['users']}, allow_unicode=True), 'BAKAWFS_QINIU_AK': keys['QINIU_AK'], 'BAKAWFS_QINIU_SK': keys['QINIU_SK'], 'BAKAWFS_KODO_BUCKET': args.bucket, 'BAKAWFS_CATALOG_PREFIX': args.catalog_prefix, 'BAKAWFS_AUTH_MODE': 'true', 'BAKAWFS_MANGA_MODE': str(args.manga).lower(), 'BAKAWFS_LOG_ENABLED': 'false', 'GOMEMLIMIT': '384MiB'}
+    if args.data_domain:
+        settings['BAKAWFS_DATA_DOMAIN'] = args.data_domain.rstrip('/')
     environment = lambda: {'Variables': [{'Key': key, 'Value': str(value)} for key, value in settings.items()]}
     archive = base64.b64encode(args.zip.read_bytes()).decode()
     try:
@@ -127,6 +129,7 @@ if __name__ == '__main__':
     parser.add_argument('--region', default='ap-guangzhou')
     parser.add_argument('--bucket', default='bakawfs-library-northwind')
     parser.add_argument('--catalog-prefix', default='catalog/v1/')
+    parser.add_argument('--data-domain', default='')
     parser.add_argument('--zip', type=Path, default=ROOT/'dist/scf/bakawfs-scf.zip')
     parser.add_argument('--users', type=Path, required=True)
     parser.add_argument('--config', type=Path, required=True)

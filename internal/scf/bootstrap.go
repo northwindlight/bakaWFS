@@ -74,6 +74,11 @@ func NewBootstrap(getenv func(string) string, logger *slog.Logger) http.Handler 
 			if e != nil {
 				return unavailable()
 			}
+			if domain := getenv("BAKAWFS_DATA_DOMAIN"); domain != "" {
+				if e = k.UseDownloadDomain(domain); e != nil {
+					return unavailable()
+				}
+			}
 			store, e := catalog.NewKodoStore(getenv("BAKAWFS_QINIU_AK"), getenv("BAKAWFS_QINIU_SK"), bucket, getenv("BAKAWFS_CATALOG_PREFIX"))
 			if e != nil {
 				return unavailable()
@@ -137,15 +142,13 @@ func newCloudAPI(cfg config.Config, users config.UsersConfig, logger *slog.Logge
 	mux.HandleFunc("GET /readyz", fs.Ready)
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"auth_mode": cfg.AuthMode, "manga_mode": cfg.MangaMode, "storage_mode": "kodo", "direct_upload": true})
+		json.NewEncoder(w).Encode(map[string]any{"auth_mode": cfg.AuthMode, "manga_mode": cfg.MangaMode, "storage_mode": "kodo", "direct_upload": true, "thumbnails": false})
 	})
 	mux.HandleFunc("/login", ah.HandleLogin)
 	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
 	read("GET /list", fs.List)
 	read("GET /tree", fs.List)
 	read("GET /files/", fs.File)
-	read("GET /thumb/", fs.Thumb)
-	read("POST /thumbs", fs.Thumbs)
 	for _, p := range []string{"rename", "copy", "delete", "mkdir"} {
 		write("POST /"+p, fs.Mutate)
 	}

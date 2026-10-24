@@ -24,8 +24,6 @@ func referencedKeys(s *catalog.Snapshot, now time.Time) map[string]bool {
 	for _, n := range s.Nodes {
 		if n.Kind == "file" {
 			keep[n.ObjectKey] = true
-			keep[thumbKey(n, "list")] = true
-			keep[thumbKey(n, "mid")] = true
 		}
 	}
 	for _, j := range s.Jobs {
@@ -34,9 +32,7 @@ func referencedKeys(s *catalog.Snapshot, now time.Time) map[string]bool {
 			if j.StageKey != "" {
 				keep[j.StageKey] = true
 			}
-			stem := "thumbs/" + strings.TrimPrefix(j.ObjectKey, "objects/")
-			keep[stem+"/list.jpg"] = true
-			keep[stem+"/mid.jpg"] = true
+
 		}
 	}
 	return keep
@@ -151,4 +147,41 @@ scan:
 		}
 	}
 	return deleted, nil
+}
+
+// PurgeLegacyThumbnails removes only the retired generated namespace. Visible
+// original objects and catalog snapshots are outside this fixed prefix.
+func (k *Kodo) PurgeLegacyThumbnails(ctx context.Context) (int, int64, error) {
+	if e := k.EnsurePrivateBucket(ctx, false); e != nil {
+		return 0, 0, e
+	}
+	count := 0
+	var bytes int64
+	for {
+		page, e := k.api.GetObjects(ctx, &apis.GetObjectsRequest{Bucket: k.Bucket, Prefix: "thumbs/", Limit: 1000}, nil)
+		if e != nil {
+			return count, bytes, fmt.Errorf("cannot list retired thumbnails")
+		}
+		if len(page.Items) == 0 {
+			return count, bytes, nil
+		}
+		operations := make([]string, 0, len(page.Items))
+		for _, item := range page.Items {
+			if !strings.HasPrefix(item.Key, "thumbs/") {
+				return count, bytes, fmt.Errorf("invalid thumbnail cleanup prefix")
+			}
+			operations = append(operations, storage.URIDelete(k.Bucket, item.Key))
+		}
+		results, e := k.manager.BatchWithContext(ctx, k.Bucket, operations)
+		if e != nil || len(results) != len(operations) {
+			return count, bytes, fmt.Errorf("thumbnail cleanup outcome unknown")
+		}
+		for i, result := range results {
+			if result.Code != 200 && result.Code != 612 {
+				return count, bytes, fmt.Errorf("thumbnail cleanup rejected")
+			}
+			count++
+			bytes += page.Items[i].Size
+		}
+	}
 }

@@ -112,10 +112,10 @@ func TestLiveRetentionCollection(t *testing.T) {
 	}
 	h := &Service{Kodo: k, Catalog: c}
 	deleted, e := h.collect(ctx, future, 100)
-	if e != nil || deleted != 3 {
+	if e != nil || deleted != 5 {
 		t.Fatalf("collection: %d %v", deleted, e)
 	}
-	for _, key := range []string{"objects/live", "objects/pending", "thumbs/live/list.jpg", "thumbs/live/mid.jpg", "objects/published-copy"} {
+	for _, key := range []string{"objects/live", "objects/pending", "objects/published-copy"} {
 		if _, e = k.Stat(ctx, key); e != nil {
 			t.Fatalf("collected protected blob %s", key)
 		}

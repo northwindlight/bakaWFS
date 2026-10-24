@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - run: python3 -m unittest discover -s test -p 'test_package_cloud_ui.py'
       - run: node --check tools/scf/node-probe/index.js
       - run: python3 scripts/package-scf.py
       - uses: actions/upload-artifact@v4

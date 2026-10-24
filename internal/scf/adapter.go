@@ -78,10 +78,13 @@ func (a *Adapter) handle(ctx context.Context, event Event) Response {
 	if event.HTTPMethod == "" || !strings.HasPrefix(event.Path, "/") || strings.HasPrefix(event.Path, "//") {
 		return failure(http.StatusBadRequest, "invalid_http_event")
 	}
-	u, err := url.ParseRequestURI(event.Path)
-	if err != nil || u.IsAbs() || u.RawQuery != "" || u.Fragment != "" {
+	// Function URL supplies an already-decoded path. Re-parsing it as a
+	// request URI would turn literal '?' into a query and reject '#'/'%'.
+	// Construct a URL value, then encode once when making the HTTP request.
+	if strings.ContainsRune(event.Path, '\x00') {
 		return failure(http.StatusBadRequest, "invalid_path")
 	}
+	u := &url.URL{Path: event.Path}
 	q := make(url.Values, len(event.QueryString))
 	for key, value := range event.QueryString {
 		q.Set(key, value)

@@ -19,7 +19,6 @@ func main() {
 	state := flag.String("state", "dist/migration", "private resumable local state")
 	bucket := flag.String("bucket", "bakawfs-library-northwind", "private library bucket")
 	keys := flag.String("keys", "/etc/qiniu/keys.env", "existing credential source")
-	cache := flag.String("thumb-cache", ".thumbcache", "existing read-only thumbnail cache")
 	prefix := flag.String("catalog-prefix", "catalog/v1/", "directory snapshot namespace")
 	workers := flag.Int("workers", 6, "concurrent network clients")
 	yes := flag.Bool("yes", false, "authorize cloud mutation")
@@ -45,7 +44,7 @@ func main() {
 		fatal(err)
 		return
 	}
-	if (*mode == "setup" || *mode == "upload" || *mode == "publish") && !*yes {
+	if (*mode == "setup" || *mode == "upload" || *mode == "publish" || *mode == "purge-thumbnails") && !*yes {
 		fatal(fmt.Errorf("cloud mutations require --yes"))
 	}
 	ak, sk, err := cloudfs.ReadKeys(*keys)
@@ -62,13 +61,19 @@ func main() {
 		fmt.Println("private library bucket and CORS ready")
 		return
 	}
+	if *mode == "purge-thumbnails" {
+		count, bytes, e := k.PurgeLegacyThumbnails(ctx)
+		fatal(e)
+		fmt.Printf("retired thumbnails removed: %d objects, %d bytes\n", count, bytes)
+		return
+	}
 	m, err := cloudfs.LoadManifest(*state)
 	if err != nil {
 		fatal(err)
 	}
 	switch *mode {
 	case "upload":
-		fatal(k.ImportFiles(ctx, m, *state, *cache, *workers))
+		fatal(k.ImportFiles(ctx, m, *state, *workers))
 	case "verify":
 		fatal(k.VerifyImport(ctx, m, *state, *workers))
 	case "publish":

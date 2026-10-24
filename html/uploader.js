@@ -293,7 +293,7 @@ export async function doCloudUpload({ file, fullPath, taskId, token, API_BASE, p
             }
         }
         update({ phase: 'merging' });
-        try { await api('/cloud/upload/complete', { job_id: prepared.job_id, parts }); }
+        try { await api('/cloud/upload/complete', { job_id: prepared.job_id }); }
         catch (e) { if (e.status === 409) localStorage.removeItem(storageKey); throw e; }
         localStorage.removeItem(storageKey);
     } finally { signal.removeEventListener('abort', cancel); }

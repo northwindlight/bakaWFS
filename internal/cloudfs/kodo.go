@@ -45,12 +45,13 @@ type Fingerprint struct {
 }
 
 type Kodo struct {
-	Bucket   string
-	creds    *auth.Credentials
-	api      *apis.Storage
-	manager  *storage.BucketManager
-	uploader *storage.FormUploader
-	urls     downloader.DownloadURLsProvider
+	Bucket       string
+	customDomain bool
+	creds        *auth.Credentials
+	api          *apis.Storage
+	manager      *storage.BucketManager
+	uploader     *storage.FormUploader
+	urls         downloader.DownloadURLsProvider
 }
 
 func ReadKeys(filename string) (string, string, error) {
@@ -153,7 +154,9 @@ func (k *Kodo) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 func (k *Kodo) URL(ctx context.Context, key, command string, ttl time.Duration) (string, error) {
 	// Kodo default origin rejects deadlines more than five minutes ahead.
 	// Keep margin for clock skew; callers refresh expired URLs through the API.
-	ttl = min(ttl, 240*time.Second)
+	if !k.customDomain {
+		ttl = min(ttl, 240*time.Second)
+	}
 	iter, err := k.urls.GetURLsIter(ctx, key, &downloader.GenerateOptions{BucketName: k.Bucket, Command: command})
 	if err != nil {
 		return "", fmt.Errorf("cannot discover object endpoint")

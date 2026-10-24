@@ -82,16 +82,22 @@ def upload(name,data):
    with network_open(reqform,timeout=90) as r:assert r.status==200;assert r.headers.get('Access-Control-Allow-Origin')=='*'
   except urllib.error.HTTPError as e:
    if e.code!=614:raise
- complete={'job_id':prep['job_id'],'parts':parts};result=ok('/cloud/upload/complete',complete,token);assert ok('/cloud/upload/complete',complete,token)['node_id']==result['node_id']
+ complete={'job_id':prep['job_id']};result=ok('/cloud/upload/complete',complete,token);assert ok('/cloud/upload/complete',complete,token)['node_id']==result['node_id']
  listing=ok('/list?path='+urllib.parse.quote(directory),token=token);node=next(n for n in listing['children'] if n['name']==name)
- with network_open(urllib.request.Request(node['url'],headers=({'Range':'bytes=0-31'} if data else {}) | {'Origin':'https://cloud.northwind.site'}),timeout=40) as r:
-  got=r.read();assert got==data[:32];assert r.status==(206 if data else 200);assert r.headers.get('Access-Control-Allow-Origin')=='*'
- unsigned=node['url'].split('?',1)[0]
- try:network_open(unsigned,timeout=20);raise AssertionError('private object publicly readable')
- except urllib.error.HTTPError as e:assert e.code in (401,403)
+ code,redirect_headers,control_body=request('/files/'+urllib.parse.quote(directory+'/'+name,safe='/')+'?download=1',token=token)
+ if data:
+  assert code==302;download_url=redirect_headers['Location']
+  with network_open(urllib.request.Request(download_url,headers={'Range':'bytes=0-31','Origin':'https://cloud.northwind.site'}),timeout=40) as r:
+   assert r.read()==data[:32];assert r.status==206;assert r.headers.get('Access-Control-Allow-Origin')=='*'
+  unsigned=node['url'].split('?',1)[0]
+  try:network_open(unsigned,timeout=20);raise AssertionError('private object publicly readable')
+  except urllib.error.HTTPError as e:assert e.code in (401,403)
+ else:assert code==200 and control_body is None
+
  return node
 small=upload('中文 # % +.txt','云上只读数据'.encode()*9);empty=upload('empty.txt',b'');large=upload('multipart.bin',bytes(range(256))*(11*1024*1024//256))
-checks.append('direct form, empty and 11 MiB multipart uploads, exact ETag/size, Range, CORS, private ACL')
+for name,data in [('literal %23.txt',b'percent'),('literal #.txt',b'hash'),('literal ?.txt',b'question')]:upload(name,data)
+checks.append('direct form, empty and 11 MiB multipart uploads, native resume, special HTTP paths, exact ETag/size, Range, CORS, private ACL')
 rename={'path':directory+'/中文 # % +.txt','dst':directory+'/改名.txt','operation_id':uid+'rename'}
 renamed=ok('/rename',rename,token);assert ok('/rename',rename,token)==renamed
 ok('/copy',{'path':directory+'/改名.txt','dst':directory+'/copy.txt','operation_id':uid+'copy'},token)

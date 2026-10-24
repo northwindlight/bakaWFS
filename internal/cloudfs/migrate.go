@@ -3,13 +3,11 @@ package cloudfs
 import (
 	"bakaWFS/internal/catalog"
 	"bakaWFS/internal/fileutil"
-	"bakaWFS/internal/thumb"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -213,7 +211,7 @@ func (m *ImportManifest) Nodes() map[string]catalog.Node {
 	return nodes
 }
 
-func (k *Kodo) ImportFiles(ctx context.Context, m *ImportManifest, state, cache string, workers int) error {
+func (k *Kodo) ImportFiles(ctx context.Context, m *ImportManifest, state string, workers int) error {
 	if err := k.EnsurePrivateBucket(ctx, false); err != nil {
 		return err
 	}
@@ -256,16 +254,7 @@ func (k *Kodo) ImportFiles(ctx context.Context, m *ImportManifest, state, cache 
 					continue
 				}
 				receipt.Objects[key] = ObjectInfo{Size: file.Size, Hash: file.ETag}
-				if thumb.Supported(file.Path) {
-					objects, err := k.ImportThumbnails(ctx, filename, file.SHA256, cache)
-					if err != nil {
-						failures <- fmt.Errorf("thumbnails %s: %w", file.Path, err)
-						continue
-					}
-					for key, info := range objects {
-						receipt.Objects[key] = info
-					}
-				}
+
 				if err := saveJSON(receiptName, receipt); err != nil {
 					failures <- err
 					continue
@@ -303,74 +292,6 @@ func (k *Kodo) ImportFiles(ctx context.Context, m *ImportManifest, state, cache 
 	return nil
 }
 
-func (k *Kodo) ImportThumbnails(ctx context.Context, filename, digest, cache string) (map[string]ObjectInfo, error) {
-	result := map[string]ObjectInfo{}
-	hash, err := thumb.ReadEmbeddedHash(filename)
-	if err != nil {
-		return nil, err
-	}
-	if hash == "" {
-		hash, err = thumb.ComputeHash(filename)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var temp string
-	defer func() {
-		if temp != "" {
-			os.RemoveAll(temp)
-		}
-	}()
-	for _, spec := range []struct {
-		name string
-		size thumb.Size
-	}{{"list", thumb.SizeList}, {"mid", thumb.SizeMid}} {
-		key := "thumbs/" + digest + "/" + spec.name + ".jpg"
-		if info, err := k.Stat(ctx, key); err == nil && info.Size > 0 {
-			result[key] = info
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(cache, hash+"-"+spec.name+".jpg"))
-		if err != nil {
-			if temp == "" {
-				temp, err = os.MkdirTemp("", "bakawfs-thumbs-")
-				if err != nil {
-					return nil, err
-				}
-				input, err := os.Open(filename)
-				if err != nil {
-					return nil, err
-				}
-				output, err := os.Create(filepath.Join(temp, "source"+filepath.Ext(filename)))
-				if err != nil {
-					input.Close()
-					return nil, err
-				}
-				_, err = io.Copy(output, input)
-				input.Close()
-				output.Close()
-				if err != nil {
-					return nil, err
-				}
-			}
-			gen, err := thumb.New(filepath.Join(temp, "cache"))
-			if err != nil {
-				return nil, err
-			}
-			data, err = gen.Get(filepath.Join(temp, "source"+filepath.Ext(filename)), spec.size)
-			if err != nil {
-				return nil, err
-			}
-		}
-		info, err := k.PutBytes(ctx, key, data, "image/jpeg")
-		if err != nil {
-			return nil, err
-		}
-		result[key] = info
-	}
-	return result, nil
-}
-
 func (k *Kodo) VerifyImport(ctx context.Context, m *ImportManifest, state string, workers int) error {
 	expected := map[string]ObjectInfo{}
 	for _, file := range m.Files {
@@ -386,20 +307,11 @@ func (k *Kodo) VerifyImport(ctx context.Context, m *ImportManifest, state string
 		if !ok || original.Size != file.Size || original.Hash != file.ETag {
 			return fmt.Errorf("missing or incorrect original receipt")
 		}
-		if thumb.Supported(file.Path) {
-			for _, size := range []string{"list", "mid"} {
-				info, ok := r.Objects["thumbs/"+file.SHA256+"/"+size+".jpg"]
-				if !ok || info.Size <= 0 || info.Hash == "" {
-					return fmt.Errorf("missing thumbnail receipt")
-				}
-			}
+		key := "objects/" + file.SHA256
+		if prior, ok := expected[key]; ok && (prior.Hash != original.Hash || prior.Size != original.Size) {
+			return fmt.Errorf("conflicting original expectations")
 		}
-		for key, info := range r.Objects {
-			if prior, ok := expected[key]; ok && (prior.Hash != info.Hash || prior.Size != info.Size) {
-				return fmt.Errorf("conflicting import expectations")
-			}
-			expected[key] = info
-		}
+		expected[key] = original
 	}
 	jobs := make(chan string)
 	failures := make(chan error, len(expected))

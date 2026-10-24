@@ -133,7 +133,7 @@ func TestEventTranslation(t *testing.T) {
 		w.WriteHeader(500)
 		w.Write([]byte(`{"ok":true}`))
 	}))
-	event := Event{HTTPMethod: "GET", Path: "/%E5%B0%81%E9%9D%A2%20%23100%25.jpg", QueryString: map[string]string{"q": "#100%+&漫画", "once": "%23"}, Headers: map[string]string{"user-agent": "browser", "x-scf-remote-addr": "2001:db8::1"}}
+	event := Event{HTTPMethod: "GET", Path: "/封面 #100%.jpg", QueryString: map[string]string{"q": "#100%+&漫画", "once": "%23"}, Headers: map[string]string{"user-agent": "browser", "x-scf-remote-addr": "2001:db8::1"}}
 	response, err := api.Handle(ctx, event)
 	if err != nil || response.StatusCode != 201 || response.Body != `{"ok":true}` {
 		t.Fatal(response, err)
@@ -144,7 +144,7 @@ func TestMalformedEvents(t *testing.T) {
 	api := NewAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Error("invalid event reached handler") }))
 	for _, event := range []Event{
 		{}, {HTTPMethod: "GET", Path: "https://example.com/"}, {HTTPMethod: "GET", Path: "//example.com/"},
-		{HTTPMethod: "GET", Path: "/?token=hidden"}, {HTTPMethod: "GET", Path: "/bad%"}, {HTTPMethod: "bad method", Path: "/"},
+		{HTTPMethod: "GET", Path: "/bad\x00"}, {HTTPMethod: "bad method", Path: "/"},
 	} {
 		invoke(t, api, event, 400)
 	}
@@ -176,5 +176,19 @@ func TestProbeConcurrentReuse(t *testing.T) {
 	}
 	if len(seen) != count {
 		t.Fatal("lost calls")
+	}
+}
+
+func TestDecodedFunctionURLPathPreservesLiteralEscapes(t *testing.T) {
+	for _, path := range []string{"/files/中文 #100%.txt", "/files/literal %23.txt", "/files/literal %2F.txt", "/files/literal ?.txt", "/files/字面?token=not-a-query"} {
+		t.Run(path, func(t *testing.T) {
+			api := NewAdapter(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != path || r.URL.RawQuery != "" {
+					t.Fatalf("path changed: %q query %q", r.URL.Path, r.URL.RawQuery)
+				}
+				w.Write([]byte("ok"))
+			}))
+			invoke(t, api, Event{HTTPMethod: "GET", Path: path}, 200)
+		})
 	}
 }

@@ -7,8 +7,9 @@ ROOT=Path(__file__).resolve().parents[1]
 def package(source,output,api):
  source=source.resolve();output=output.resolve()
  if output==source or source in output.parents:raise ValueError('output must be outside source')
- if api and (urlsplit(api).scheme!='https' or urlsplit(api).query or urlsplit(api).fragment):raise ValueError('API must be an HTTPS origin')
- files={p.relative_to(source).as_posix():p.read_bytes() for p in source.rglob('*') if p.is_file()}
+ if api and (urlsplit(api).scheme!='https' or urlsplit(api).username or urlsplit(api).password or urlsplit(api).query or urlsplit(api).fragment):raise ValueError('API must be an HTTPS origin')
+ if not (source/'index.html').is_file():raise ValueError('UI source must contain index.html')
+ files={p.relative_to(source).as_posix():p.read_bytes() for p in source.rglob('*') if p.is_file() and not any(part.startswith('.') for part in p.relative_to(source).parts)}
  files['runtime-config.js']=('globalThis.BAKAWFS_CONFIG = '+json.dumps({'apiBase':api.rstrip('/')})+';\n').encode()
  patterns={'.html':re.compile(r'(?:src|href)\s*=\s*[\'"]([^\'"]+)[\'"]'),'.js':re.compile(r'(?:from|import)\s*\(?\s*[\'"]([^\'"]+)[\'"]'),'.css':re.compile(r'url\(\s*[\'"]?([^\'"\)]+)[\'"]?\s*\)')}
  built={};visiting=set()
@@ -31,7 +32,15 @@ def package(source,output,api):
   newkey=key if key=='index.html' else str(p.with_name(p.stem+'.'+hashlib.sha256(data).hexdigest()[:12]+p.suffix))
   built[key]=(newkey,data);visiting.remove(key);return built[key]
  for key in files:build(key)
- if output.exists():shutil.rmtree(output)
+ if output.exists():
+  existing={p.relative_to(output).as_posix():p for p in output.rglob('*') if p.is_file()}
+  if existing:
+   manifest_path=output.with_suffix('.manifest.json')
+   try:previous=json.loads(manifest_path.read_text())['assets']
+   except (OSError,ValueError,KeyError):raise ValueError('refusing to replace an unmanaged output directory') from None
+   expected={asset['key']:asset['sha256'] for asset in previous}
+   if set(existing)!=set(expected) or any(hashlib.sha256(existing[key].read_bytes()).hexdigest()!=value for key,value in expected.items()):raise ValueError('output contains files outside the previous build manifest')
+  shutil.rmtree(output)
  output.mkdir(parents=True)
  for key,data in built.values():
   dest=output/key;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(data)
