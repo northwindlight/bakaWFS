@@ -113,7 +113,7 @@ def deploy(args):
     call('UpdateFunctionConfiguration', Environment=environment(), ClsLogsetId='', ClsTopicId='', IgnoreSysLog=True)
     result = wait()
     if args.timer and not any(t['TriggerName'] == 'bakawfs-maintenance' for t in triggers):
-        call('CreateTrigger', Qualifier='$LATEST', TriggerName='bakawfs-maintenance', Type='timer', Enable='OPEN', TriggerDesc=json.dumps({'cron': '0 */15 * * * * *'}))
+        call('CreateTrigger', Qualifier='$LATEST', TriggerName='bakawfs-maintenance', Type='timer', Enable='OPEN', TriggerDesc='0 */15 * * * * *')
     if result.get('ClsTopicId') or result.get('ClsLogsetId') or not result.get('IgnoreSysLog'):
         raise CloudError('platform logging was not disabled')
     # Do not remove unrelated account topics. This only verifies deployment
