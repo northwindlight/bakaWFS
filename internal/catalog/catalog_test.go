@@ -232,3 +232,80 @@ func TestInvalidAndRootActions(t *testing.T) {
 		t.Fatal("snapshot cannot be serialized")
 	}
 }
+
+func TestSeedRejectsIncompleteAndDifferentImports(t *testing.T) {
+	ctx := context.Background()
+	store := newMemoryStore()
+	c := New(store)
+	nodes := map[string]Node{"root": {ID: "root", Kind: "dir"}, "f": {ID: "f", Parent: "root", Name: "原档 #%.jpg", Kind: "file", ObjectKey: "objects/hash", Hash: "etag", Size: 123}}
+	if e := c.Seed(ctx, nodes); e != nil {
+		t.Fatal(e)
+	}
+	if e := c.Seed(ctx, nodes); e != nil {
+		t.Fatal(e)
+	}
+	nodes["f"] = Node{ID: "f", Parent: "missing", Name: "image", Kind: "file", ObjectKey: "object", Hash: "etag"}
+	if e := New(newMemoryStore()).Seed(ctx, nodes); e == nil {
+		t.Fatal("accepted missing parent")
+	}
+	delete(nodes, "f")
+	if e := c.Seed(ctx, nodes); e == nil {
+		t.Fatal("overwrote seed")
+	}
+}
+func TestLateJobCannotRecreateDeletedOrReplacedParent(t *testing.T) {
+	c, _ := setup(t)
+	p := apply(t, c, Operation{ID: "parent", Kind: "mkdir", ParentID: "root", Name: "book"})
+	job := Job{ID: "late", Actor: "admin", Kind: "upload", ParentID: p.NodeID, Name: "1.jpg", ObjectKey: "objects/late", Size: 10, Hash: "expected"}
+	start := apply(t, c, Operation{ID: "start", Kind: "job_start", Job: &job})
+	if start.Error != "" {
+		t.Fatal(start)
+	}
+	apply(t, c, Operation{ID: "delete", Kind: "delete", NodeID: p.NodeID})
+	replacement := apply(t, c, Operation{ID: "replacement", Kind: "mkdir", ParentID: "root", Name: "book"})
+	result := apply(t, c, Operation{ID: "finish", Kind: "job_finish", JobID: job.ID, ObjectKey: job.ObjectKey, Size: 10, Hash: "expected"})
+	if result.Error != "parent_not_found" {
+		t.Fatal(result)
+	}
+	snapshot, e := c.Current(context.Background(), 0)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(snapshot.Children(replacement.NodeID)) != 0 || snapshot.Jobs[job.ID].State != "failed" {
+		t.Fatal("late publish recreated parent")
+	}
+}
+func TestCancelAndFinishHaveOneWinner(t *testing.T) {
+	for range 30 {
+		c, store := setup(t)
+		job := Job{ID: "race", Actor: "admin", Kind: "upload", ParentID: "root", Name: "file", ObjectKey: "objects/race", Size: 0, Hash: "empty"}
+		apply(t, c, Operation{ID: "start", Kind: "job_start", Job: &job})
+		var wg sync.WaitGroup
+		wg.Go(func() { apply(t, New(store), Operation{ID: "cancel", Kind: "job_cancel", JobID: job.ID}) })
+		wg.Go(func() {
+			apply(t, New(store), Operation{ID: "finish", Kind: "job_finish", JobID: job.ID, ObjectKey: job.ObjectKey, Hash: "empty"})
+		})
+		wg.Wait()
+		s, e := c.Current(context.Background(), 0)
+		if e != nil {
+			t.Fatal(e)
+		}
+		state := s.Jobs[job.ID].State
+		if (state == "published" && len(s.Nodes) != 2) || (state == "cancelled" && len(s.Nodes) != 1) || (state != "cancelled" && state != "published") {
+			t.Fatalf("inconsistent winner: %s %d", state, len(s.Nodes))
+		}
+	}
+}
+func TestEmptyUploadSizeAndActorBound(t *testing.T) {
+	c, _ := setup(t)
+	job := Job{ID: "empty", Actor: "admin", Kind: "upload", ParentID: "root", Name: "empty", ObjectKey: "objects/empty", Hash: "hash"}
+	apply(t, c, Operation{ID: "start", Kind: "job_start", Job: &job})
+	r := apply(t, c, Operation{ID: "stolen", Actor: "other", Kind: "job_cancel", JobID: job.ID})
+	if r.Error != "job_not_found" {
+		t.Fatal(r)
+	}
+	r = apply(t, c, Operation{ID: "bad-size", Kind: "job_finish", JobID: job.ID, ObjectKey: job.ObjectKey, Hash: "hash", Size: 1})
+	if r.Error != "object_mismatch" {
+		t.Fatal(r)
+	}
+}

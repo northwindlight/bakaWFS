@@ -3,6 +3,7 @@
 package scf
 
 import (
+	"bakaWFS/internal/cloudfs"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -21,6 +22,8 @@ const maxControlBody = 256 * 1024
 
 // Event follows Function URL's event protocol, not API Gateway's base64 protocol.
 type Event struct {
+	Type        string            `json:"Type,omitempty"`
+	TriggerName string            `json:"TriggerName,omitempty"`
 	HTTPMethod  string            `json:"httpMethod"`
 	Path        string            `json:"path"`
 	Headers     map[string]string `json:"headers"`
@@ -61,6 +64,14 @@ func failure(status int, code string) Response {
 }
 
 func (a *Adapter) handle(ctx context.Context, event Event) Response {
+	scheduled := event.HTTPMethod == "" && event.Type == "Timer" && event.TriggerName == "bakawfs-maintenance"
+	if scheduled {
+		event.HTTPMethod = "POST"
+		event.Path = "/cloud/maintenance"
+		event.Body = ""
+		event.QueryString = nil
+	}
+
 	if len(event.Body) > maxControlBody {
 		return failure(http.StatusRequestEntityTooLarge, "control_body_too_large")
 	}
@@ -82,6 +93,10 @@ func (a *Adapter) handle(ctx context.Context, event Event) Response {
 	}
 	for key, value := range event.Headers {
 		r.Header.Set(key, value)
+	}
+	r.Header.Del(cloudfs.ScheduledHeader)
+	if scheduled {
+		r.Header.Set(cloudfs.ScheduledHeader, "true")
 	}
 	r.Host = r.Header.Get("Host")
 	if ip := net.ParseIP(r.Header.Get("X-Scf-Remote-Addr")); ip != nil {

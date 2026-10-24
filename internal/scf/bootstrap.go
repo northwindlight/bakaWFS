@@ -2,6 +2,8 @@ package scf
 
 import (
 	"bakaWFS/internal/auth"
+	"bakaWFS/internal/catalog"
+	"bakaWFS/internal/cloudfs"
 	"bakaWFS/internal/config"
 	"bakaWFS/internal/handler"
 	"encoding/json"
@@ -67,6 +69,17 @@ func NewBootstrap(getenv func(string) string, logger *slog.Logger) http.Handler 
 				json.NewEncoder(w).Encode(map[string]string{"error": "function_not_configured"})
 			})
 		}
+		if bucket := getenv("BAKAWFS_KODO_BUCKET"); bucket != "" {
+			k, e := cloudfs.NewKodo(getenv("BAKAWFS_QINIU_AK"), getenv("BAKAWFS_QINIU_SK"), bucket)
+			if e != nil {
+				return unavailable()
+			}
+			store, e := catalog.NewKodoStore(getenv("BAKAWFS_QINIU_AK"), getenv("BAKAWFS_QINIU_SK"), bucket, getenv("BAKAWFS_CATALOG_PREFIX"))
+			if e != nil {
+				return unavailable()
+			}
+			return newCloudAPI(cfg, users, logger, &cloudfs.Service{Kodo: k, Catalog: catalog.New(store), CallbackBase: getenv("BAKAWFS_PUBLIC_API"), Secret: cfg.Secret, Manga: cfg.MangaMode})
+		}
 		return newControlAPI(cfg, users, logger)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,4 +114,47 @@ func NewProbe() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", health)
 	return mux
+}
+
+func unavailable() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "function_not_configured", 503) })
+}
+func newCloudAPI(cfg config.Config, users config.UsersConfig, logger *slog.Logger, fs *cloudfs.Service) http.Handler {
+	svc := auth.NewAuth(cfg, users)
+	ah := handler.NewAuthHandler(svc, logger, cfg.AuthMode, cfg.MangaMode)
+	authMW := handler.AuthMiddleware(svc, logger)
+	admin := handler.RequireAdmin(logger)
+	mux := http.NewServeMux()
+	read := func(pattern string, f http.HandlerFunc) {
+		if cfg.AuthMode {
+			mux.HandleFunc(pattern, authMW(f))
+		} else {
+			mux.HandleFunc(pattern, f)
+		}
+	}
+	write := func(pattern string, f http.HandlerFunc) { mux.HandleFunc(pattern, authMW(admin(f))) }
+	mux.HandleFunc("GET /healthz", health)
+	mux.HandleFunc("GET /readyz", fs.Ready)
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"auth_mode": cfg.AuthMode, "manga_mode": cfg.MangaMode, "storage_mode": "kodo", "direct_upload": true})
+	})
+	mux.HandleFunc("/login", ah.HandleLogin)
+	mux.HandleFunc("/verify", authMW(ah.HandleVerify))
+	read("GET /list", fs.List)
+	read("GET /tree", fs.List)
+	read("GET /files/", fs.File)
+	read("GET /thumb/", fs.Thumb)
+	read("POST /thumbs", fs.Thumbs)
+	for _, p := range []string{"rename", "copy", "delete", "mkdir"} {
+		write("POST /"+p, fs.Mutate)
+	}
+	write("POST /cloud/upload/prepare", fs.Prepare)
+	write("POST /cloud/upload/complete", fs.Complete)
+	write("POST /remote-upload", fs.Prepare)
+	write("POST /cancel", fs.Cancel)
+	write("GET /progress", fs.Progress)
+	mux.HandleFunc("POST /cloud/callback", fs.Callback)
+	mux.HandleFunc("POST /cloud/maintenance", fs.Maintain)
+	return handler.RequestLogger(logger)(handler.CORSMiddleware(handler.StatusOK(mux)))
 }

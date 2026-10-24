@@ -4,6 +4,7 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,12 +16,14 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 )
 
 var (
 	ErrNotFound = errors.New("snapshot not found")
 	ErrExists   = errors.New("snapshot already exists")
+	ErrCapacity = errors.New("catalog capacity reached")
 )
 
 // Store must atomically publish complete bytes, reject different bytes already
@@ -51,6 +54,7 @@ type Result struct {
 
 type Receipt struct {
 	Fingerprint string `json:"fingerprint"`
+	RequestHash string `json:"request_hash,omitempty"`
 	Result      Result `json:"result"`
 }
 
@@ -59,18 +63,43 @@ type Snapshot struct {
 	Revision uint64             `json:"revision"`
 	Nodes    map[string]Node    `json:"nodes"`
 	Receipts map[string]Receipt `json:"receipts"`
+	Jobs     map[string]Job     `json:"jobs,omitempty"`
+}
+
+type Job struct {
+	ID          string `json:"id"`
+	Actor       string `json:"actor"`
+	Kind        string `json:"kind"`
+	ParentID    string `json:"parent_id"`
+	Name        string `json:"name"`
+	ObjectKey   string `json:"object_key"`
+	Size        int64  `json:"size"`
+	Hash        string `json:"hash"`
+	RequestHash string `json:"request_hash"`
+	UploadID    string `json:"upload_id,omitempty"`
+	SourceURL   string `json:"source_url,omitempty"`
+	StageKey    string `json:"stage_key,omitempty"`
+	State       string `json:"state"`
+	Created     int64  `json:"created"`
+	Expires     int64  `json:"expires"`
+	NodeID      string `json:"node_id,omitempty"`
+	Error       string `json:"error,omitempty"`
 }
 
 type Operation struct {
-	ID        string `json:"id"`
-	Actor     string `json:"actor"`
-	Kind      string `json:"kind"` // mkdir, publish, move, copy, delete
-	NodeID    string `json:"node_id,omitempty"`
-	ParentID  string `json:"parent_id,omitempty"`
-	Name      string `json:"name,omitempty"`
-	ObjectKey string `json:"object_key,omitempty"`
-	Size      int64  `json:"size,omitempty"`
-	Hash      string `json:"hash,omitempty"`
+	ID          string `json:"id"`
+	RequestHash string `json:"request_hash,omitempty"`
+	Actor       string `json:"actor"`
+	Kind        string `json:"kind"` // mkdir, publish, move, copy, delete
+	NodeID      string `json:"node_id,omitempty"`
+	ParentID    string `json:"parent_id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	ObjectKey   string `json:"object_key,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	Hash        string `json:"hash,omitempty"`
+	Job         *Job   `json:"job,omitempty"`
+	JobID       string `json:"job_id,omitempty"`
+	UploadID    string `json:"upload_id,omitempty"`
 }
 
 type Catalog struct {
@@ -79,6 +108,69 @@ type Catalog struct {
 }
 
 func New(store Store) *Catalog { return &Catalog{store: store} }
+
+// Seed atomically publishes a complete imported library as revision zero.
+func (c *Catalog) Seed(ctx context.Context, nodes map[string]Node) error {
+	initial := Snapshot{Format: 1, Nodes: nodes, Receipts: map[string]Receipt{}}
+	if err := initial.Validate(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(initial)
+	if err != nil {
+		return err
+	}
+	if err := c.store.Create(ctx, 0, data); errors.Is(err, ErrExists) {
+		actual, readErr := c.store.Read(ctx, 0)
+		if readErr != nil {
+			return readErr
+		}
+		if !bytes.Equal(actual, data) {
+			return fmt.Errorf("existing catalog seed differs; refusing to replace library")
+		}
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (s *Snapshot) Validate() error {
+	root, ok := s.Nodes["root"]
+	if !ok || root.ID != "root" || root.Parent != "" || root.Kind != "dir" {
+		return fmt.Errorf("invalid catalog root")
+	}
+	names := map[string]bool{}
+	for id, n := range s.Nodes {
+		if n.ID != id || (n.Kind != "dir" && n.Kind != "file") {
+			return fmt.Errorf("invalid catalog node")
+		}
+		if id == "root" {
+			continue
+		}
+		parent, ok := s.Nodes[n.Parent]
+		if !ok || parent.Kind != "dir" {
+			return fmt.Errorf("missing parent in imported catalog")
+		}
+		if !utf8.ValidString(n.Name) || n.Name == "" || n.Name == "." || n.Name == ".." || strings.ContainsAny(n.Name, "/\\\x00") {
+			return fmt.Errorf("invalid imported filename")
+		}
+		key := n.Parent + "\x00" + n.Name
+		if names[key] {
+			return fmt.Errorf("duplicate imported name")
+		}
+		names[key] = true
+		if n.Kind == "file" && (n.ObjectKey == "" || n.Hash == "" || n.Size < 0) {
+			return fmt.Errorf("invalid imported object")
+		}
+		visited := map[string]bool{}
+		for p := id; p != "root"; p = s.Nodes[p].Parent {
+			if p == "" || visited[p] {
+				return fmt.Errorf("cycle in imported catalog")
+			}
+			visited[p] = true
+		}
+	}
+	return nil
+}
 
 func (c *Catalog) Init(ctx context.Context) error {
 	initial := Snapshot{Format: 1, Nodes: map[string]Node{"root": {ID: "root", Kind: "dir"}}, Receipts: map[string]Receipt{}}
@@ -102,6 +194,9 @@ func (c *Catalog) read(ctx context.Context, revision uint64) (*Snapshot, error) 
 	if snapshot.Format != 1 || snapshot.Revision != revision || snapshot.Nodes == nil || snapshot.Receipts == nil || snapshot.Nodes["root"].Kind != "dir" {
 		return nil, fmt.Errorf("invalid snapshot at revision %d", revision)
 	}
+	if err := snapshot.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid catalog graph at revision %d", revision)
+	}
 	return &snapshot, nil
 }
 
@@ -118,8 +213,20 @@ func (c *Catalog) remember(revision uint64) {
 // a revision it has already observed. Provider visibility/availability still
 // bounds freshness; a missing required revision fails instead of falling back.
 func (c *Catalog) Current(ctx context.Context, minRevision uint64) (*Snapshot, error) {
+	probe := c.read
+	if index, ok := c.store.(interface {
+		Exists(context.Context, uint64) (bool, error)
+	}); ok {
+		probe = func(ctx context.Context, revision uint64) (*Snapshot, error) {
+			exists, e := index.Exists(ctx, revision)
+			if e == nil && !exists {
+				return nil, ErrNotFound
+			}
+			return nil, e
+		}
+	}
 	low := max(c.floor.Load(), minRevision)
-	latest, err := c.read(ctx, low)
+	latest, err := probe(ctx, low)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +237,7 @@ func (c *Catalog) Current(ctx context.Context, minRevision uint64) (*Snapshot, e
 			return nil, fmt.Errorf("revision space exhausted")
 		}
 		high = low + step
-		next, err := c.read(ctx, high)
+		next, err := probe(ctx, high)
 		if errors.Is(err, ErrNotFound) {
 			break
 		}
@@ -144,7 +251,7 @@ func (c *Catalog) Current(ctx context.Context, minRevision uint64) (*Snapshot, e
 	}
 	for high-low > 1 {
 		middle := low + (high-low)/2
-		next, err := c.read(ctx, middle)
+		next, err := probe(ctx, middle)
 		if errors.Is(err, ErrNotFound) {
 			high = middle
 			continue
@@ -153,6 +260,12 @@ func (c *Catalog) Current(ctx context.Context, minRevision uint64) (*Snapshot, e
 			return nil, err
 		}
 		low, latest = middle, next
+	}
+	if latest == nil {
+		latest, err = c.read(ctx, low)
+		if err != nil {
+			return nil, err
+		}
 	}
 	c.remember(low)
 	return latest, nil
@@ -189,10 +302,13 @@ func (c *Catalog) Apply(ctx context.Context, op Operation) (Result, error) {
 		result := mutate(snapshot, op)
 		result.Revision = revision
 		snapshot.Revision = revision
-		snapshot.Receipts[key] = Receipt{Fingerprint: hex.EncodeToString(fingerprint[:]), Result: result}
+		snapshot.Receipts[key] = Receipt{Fingerprint: hex.EncodeToString(fingerprint[:]), RequestHash: op.RequestHash, Result: result}
 		data, err := json.Marshal(snapshot)
 		if err != nil {
 			return Result{}, err
+		}
+		if len(data) > MaxSnapshotBytes {
+			return Result{}, ErrCapacity
 		}
 		err = c.store.Create(ctx, revision, data)
 		if errors.Is(err, ErrExists) {
@@ -219,6 +335,9 @@ func nodeID(op Operation, source string) string {
 }
 
 func mutate(s *Snapshot, op Operation) Result {
+	if strings.HasPrefix(op.Kind, "job_") {
+		return mutateJob(s, op)
+	}
 	bad := func(code string) Result { return Result{Error: code} }
 	if op.Kind != "mkdir" && op.Kind != "publish" && op.Kind != "move" && op.Kind != "copy" && op.Kind != "delete" {
 		return bad("unknown_operation")
@@ -287,6 +406,93 @@ func mutate(s *Snapshot, op Operation) Result {
 		id = nodeID(op, source.ID)
 	}
 	return Result{NodeID: id, Path: s.Path(id)}
+}
+
+func mutateJob(s *Snapshot, op Operation) Result {
+	bad := func(code string) Result { return Result{Error: code} }
+	if s.Jobs == nil {
+		s.Jobs = map[string]Job{}
+	}
+	if op.Kind == "job_start" {
+		if op.Job == nil || op.Job.ID == "" || op.Job.Actor != op.Actor || op.Job.ObjectKey == "" || op.Job.Size < 0 {
+			return bad("invalid_job")
+		}
+		if _, ok := s.Jobs[op.Job.ID]; ok {
+			return bad("job_already_exists")
+		}
+		parent, ok := s.Nodes[op.Job.ParentID]
+		if !ok || parent.Kind != "dir" {
+			return bad("parent_not_found")
+		}
+		job := *op.Job
+		job.State = "pending"
+		job.Created = time.Now().Unix()
+		if job.Expires == 0 {
+			job.Expires = job.Created + 86400
+		}
+		s.Jobs[job.ID] = job
+		return Result{NodeID: job.ID}
+	}
+	job, ok := s.Jobs[op.JobID]
+	if !ok || job.Actor != op.Actor {
+		return bad("job_not_found")
+	}
+	switch op.Kind {
+	case "job_upload_id":
+		if job.State != "pending" {
+			return bad("job_not_pending")
+		}
+		if job.UploadID != "" {
+			return bad("upload_already_initialized")
+		}
+		if op.UploadID == "" {
+			return bad("invalid_upload_id")
+		}
+		job.UploadID = op.UploadID
+	case "job_cancel":
+		if job.State == "published" {
+			return bad("already_committed")
+		}
+		job.State = "cancelled"
+	case "job_fail":
+		if job.State == "published" {
+			return bad("already_committed")
+		}
+		if job.State != "cancelled" {
+			job.State = "failed"
+			job.Error = "transfer_failed"
+		}
+	case "job_finish":
+		if job.State != "pending" {
+			return bad("job_not_pending")
+		}
+		if time.Now().Unix() > job.Expires {
+			job.State = "expired"
+			job.Error = "job_expired"
+			s.Jobs[job.ID] = job
+			return bad(job.Error)
+		}
+		if op.ObjectKey != job.ObjectKey || op.Size < 0 || ((job.Kind == "upload" || job.Size > 0) && job.Size != op.Size) || (job.Hash != "" && job.Hash != op.Hash) {
+			return bad("object_mismatch")
+		}
+		result := mutate(s, Operation{ID: op.ID, Actor: op.Actor, Kind: "publish", ParentID: job.ParentID, Name: job.Name, ObjectKey: op.ObjectKey, Size: op.Size, Hash: op.Hash})
+		if result.Error != "" {
+			job.State = "failed"
+			job.Error = result.Error
+			s.Jobs[job.ID] = job
+			return result
+		}
+		job.State = "published"
+		job.NodeID = result.NodeID
+		job.Size = op.Size
+		job.Hash = op.Hash
+		s.Jobs[job.ID] = job
+		return result
+	default:
+		return bad("unknown_job_operation")
+	}
+	s.Jobs[job.ID] = job
+	return Result{NodeID: job.ID}
 }
 
 func descendants(s *Snapshot, root string) map[string]Node {

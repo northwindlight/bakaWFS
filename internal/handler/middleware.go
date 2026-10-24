@@ -136,7 +136,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range, Authorization, X-Upload-Filename, X-Chunk-Index")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition, X-Catalog-Revision")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -2,17 +2,28 @@ const { createApp, ref, reactive, computed, watch, onMounted, onUnmounted, nextT
 
 // 导入拆分的模块
 import { i18n } from './i18n.js';
-import { 
-    generateTaskId, isValidUrl, formatSpeed, formatSize, 
-    naturalCompare, classifyFile, fileTypeIcon, getFileExt 
+import {
+    generateTaskId, isValidUrl, formatSpeed, formatSize,
+    naturalCompare, classifyFile, fileTypeIcon, getFileExt
 } from './utils.js';
-import { 
-    doDirectUpload, doChunkUpload, calcChunkSize, DIRECT_UPLOAD_THRESHOLD 
+import {
+    doCloudUpload, doDirectUpload, doChunkUpload, calcChunkSize, DIRECT_UPLOAD_THRESHOLD
 } from './uploader.js';
 
 createApp({
     setup() {
-        const API_BASE = '';
+        const API_BASE = globalThis.BAKAWFS_CONFIG?.apiBase || '';
+        const cloudMode = ref(false);
+        let observedRevision = 0;
+        const apiFetch = async (url, options) => {
+            const parsed = new URL(url, location.href);
+            if (cloudMode.value && observedRevision) parsed.searchParams.set('min_revision', observedRevision);
+            const response = await fetch(parsed, options);
+            const revision = Number(response.headers.get('X-Catalog-Revision'));
+            if (Number.isSafeInteger(revision)) observedRevision = Math.max(observedRevision, revision);
+            return response;
+        };
+
         const currentDir = ref(null);      // 当前层节点（/list?path= 浅扫 depth2 的结果）
         const pathStack = ref([]);         // 各层 { name }，供面包屑/拼路径（懒加载下只存名字）
         const loading = ref(false);
@@ -98,7 +109,7 @@ createApp({
         const handleLogin = async () => {
             if (!loginForm.value.username) return alert(i18n.unknownName);
             try {
-                const res = await fetch(`${API_BASE}/login`, {
+                const res = await apiFetch(`${API_BASE}/login`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(loginForm.value)
@@ -154,7 +165,7 @@ createApp({
                 if (ext.aborted) controller.abort();
                 else ext.addEventListener('abort', () => controller.abort(), { once: true });
             }
-            return fetch(url, { ...options, signal: controller.signal })
+            return apiFetch(url, { ...options, signal: controller.signal })
                 .finally(() => clearTimeout(timer));
         };
 
@@ -403,12 +414,14 @@ createApp({
 
             openProgressModal();
 
-            const Path = pathStack.value.map(p => p.name);
+            // Hash navigation commits before the asynchronous directory response.
+            // Bind an upload to the destination the user has navigated to.
+            const Path = parseHash();
             const fullPath = [...Path, file.name].join('/');
             const taskId = generateTaskId();
             const token = localStorage.getItem('baka_token');
 
-            if (file.size < DIRECT_UPLOAD_THRESHOLD) {
+            if (!cloudMode.value && file.size < DIRECT_UPLOAD_THRESHOLD) {
                 progressData.value[taskId] = {
                     filename: fullPath,
                     path: ['home', ...Path].join('/'),
@@ -447,14 +460,14 @@ createApp({
                     total,
                     sent: 0,
                 };
-                
+
                 const controller = new AbortController();
                 uploadTasks.value[taskId] = controller;
-                
+
                 try {
-                    await doChunkUpload({ 
-                        file, fullPath, taskId, total, chunkSize, token, 
-                        API_BASE, progressData, controller
+                    await (cloudMode.value ? doCloudUpload : doChunkUpload)({
+                        file, fullPath, taskId, total, chunkSize, token,
+                        API_BASE, progressData, controller, onCommitted: refreshAfterWrite
                     });
                     refreshAfterWrite();
                 } catch (e) {
@@ -470,8 +483,14 @@ createApp({
             }
         };
 
+        const getFileControlUrl = (fileName) => {
+            const parts = [...pathStack.value.map(p => p.name), fileName];
+            return `${API_BASE}/files/${parts.map(encodeURIComponent).join('/')}`;
+        };
         const getFileUrl = (fileName) => {
             if (!currentDir.value) return '#';
+            const directUrl = currentDir.value.children?.find(c => c.name === fileName)?.url;
+            if (directUrl && Number(new URL(directUrl).searchParams.get('e')) > Date.now() / 1000 + 30) return directUrl;
             const pathParts = [...pathStack.value.map(p => p.name), fileName];
             return `${API_BASE}/files/${pathParts.map(encodeURIComponent).join('/')}`;
         };
@@ -483,11 +502,20 @@ createApp({
         };
 
         const downloadFile = async (fileName) => {
+            if (cloudMode.value) {
+                const query = new URLSearchParams({ download: '1' });
+                const token = localStorage.getItem('baka_token');
+                if (token) query.set('token', token);
+                const link = document.createElement('a');
+                link.href = getFileControlUrl(fileName) + '?' + query;
+                link.target = '_blank'; link.rel = 'noopener'; link.download = fileName;
+                document.body.appendChild(link); link.click(); link.remove(); return;
+            }
             try {
                 const fileUrl = getFileUrl(fileName);
                 const token = localStorage.getItem('baka_token');
                 if (token) {
-                    const res = await fetch(fileUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                    const res = await fetch(fileUrl, fileUrl.startsWith(API_BASE + '/') ? { headers: { 'Authorization': `Bearer ${token}` } } : {});
                     if (!res.ok) throw new Error(`${res.status}`);
                     const blob = await res.blob();
                     const blobUrl = URL.createObjectURL(blob);
@@ -627,7 +655,7 @@ createApp({
             _metaFetching.add(relPath);
             try {
                 const token = localStorage.getItem('baka_token');
-                const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                const opts = token && getFileUrl(name).startsWith(API_BASE + '/') ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
                 const url = `${API_BASE}/files/${relPath.split('/').map(encodeURIComponent).join('/')}/article.md`;
                 const res = await fetch(url, opts);
                 if (res.ok) {
@@ -676,6 +704,14 @@ createApp({
         // ── 列表缩略图批量加载 ───────────────────────
         // 文件名 -> blob URL（LQIP）。进入目录时批量拉取，列表项据此显示预览。
         const thumbMap = ref({});
+        const onThumbError = (event, name) => {
+            const img = event.target;
+            if (cloudMode.value && !img.dataset.retried) {
+                img.dataset.retried = '1';
+                const token = localStorage.getItem('baka_token');
+                img.src = getThumbUrl(name) + '?size=list' + (token ? '&token=' + encodeURIComponent(token) : '');
+            } else { img.style.visibility = 'hidden'; }
+        };
         const _thumbBlobs = [];           // 已创建的 blob URL，切目录时释放
         const THUMB_BATCH = 200;
         let _thumbSeq = 0;
@@ -704,10 +740,11 @@ createApp({
             const headers = { 'Content-Type': 'application/json' };
             if (token) headers['Authorization'] = `Bearer ${token}`;
             try {
-                const res = await fetch(`${API_BASE}/thumbs`, {
+                const res = await apiFetch(`${API_BASE}/thumbs`, {
                     method: 'POST', headers, body: JSON.stringify({ paths })
                 });
                 if (!res.ok) throw new Error(`status ${res.status}`);
+                if (res.headers.get('content-type')?.includes('application/json')) return await res.json();
                 return parseThumbStream(await res.arrayBuffer());
             } catch (e) {
                 if (retries > 0) {
@@ -738,9 +775,9 @@ createApp({
                 const results = await fetchThumbBatch(paths);
                 if (seq !== _thumbSeq) return;
                 const next = { ...thumbMap.value };
-                for (const { path, blob } of results) {
-                    const url = URL.createObjectURL(blob);
-                    _thumbBlobs.push(url);
+                for (const { path, blob, url: directUrl } of results) {
+                    const url = directUrl || URL.createObjectURL(blob);
+                    if (!directUrl) _thumbBlobs.push(url);
                     const name = path.slice(path.lastIndexOf('/') + 1);
                     next[name] = url;
                 }
@@ -857,7 +894,7 @@ createApp({
                 _searchMetaFetching.add(p.key);
                 try {
                     const token = localStorage.getItem('baka_token');
-                    const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                    const opts = token && getFileUrl(name).startsWith(API_BASE + '/') ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
                     const url = `${API_BASE}/files/${p.key.split('/').map(encodeURIComponent).join('/')}/article.md`;
                     const res = await fetch(url, opts);
                     if (res.ok) searchMeta[p.key] = parseArticleMd(await res.text());
@@ -920,8 +957,9 @@ createApp({
         let _imageSession = 0;
         const fetchAuthUrl = async (url) => {
             const token = localStorage.getItem('baka_token');
-            if (!token) return url;
-            const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (!token && !cloudMode.value) return url;
+            const isAPI = url.startsWith(API_BASE + '/');
+            const res = await fetch(url, isAPI && token ? { headers: { 'Authorization': `Bearer ${token}` } } : {});
             if (!res.ok) throw new HttpError(res.status);
             return URL.createObjectURL(await res.blob());
         };
@@ -1097,7 +1135,7 @@ createApp({
                 } else {
                     try {
                         const token = localStorage.getItem('baka_token');
-                        const opts = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
+                        const opts = token && getFileUrl(name).startsWith(API_BASE + '/') ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
                         const res = await fetch(getFileUrl(name), opts);
                         if (!res.ok) throw new HttpError(res.status);
                         const text = await res.text();
@@ -1122,16 +1160,17 @@ createApp({
                 const urlObj = new URL(remoteUrl.value);
                 let fileName = urlObj.pathname.split('/').pop() || i18n.unknownFilePrefix + Date.now();
                 const storagePath = [...pathStack.value.map(p => p.name), fileName].join('/');
-                const res = await fetch(`${API_BASE}/remote-upload`, {
+                const res = await apiFetch(`${API_BASE}/remote-upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ url: remoteUrl.value, filename: decodeURIComponent(storagePath) })
+                    body: JSON.stringify({ url: remoteUrl.value, filename: decodeURIComponent(storagePath), operation_id: mutationId({ url: remoteUrl.value, filename: storagePath }) })
                 });
                 if (!res.ok) throw new Error(res.statusText || i18n.transferFailed);
                 showRemoteModal.value = false;
+                pendingMutation = null;
                 remoteUrl.value = '';
                 openProgressModal();
             } catch (e) {
@@ -1141,7 +1180,7 @@ createApp({
 
         const pollProgress = async () => {
             try {
-                const res = await fetch(`${API_BASE}/progress`, {
+                const res = await apiFetch(`${API_BASE}/progress`, {
                     method: 'GET',
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('baka_token')}` }
                 });
@@ -1166,7 +1205,9 @@ createApp({
                             expectedSize: info.expectedSize,
                             speed: 0,
                             remaining: null,
-                            type: 'remote'
+                            type: 'remote',
+                            phase: info.state === 'fetching' ? 'fetching' : undefined,
+                            jobId: info.job_id
                         };
                         lastProgress.value[taskId] = { downloadSize: info.downloadSize, timestamp: now };
                     } else {
@@ -1241,10 +1282,10 @@ createApp({
                 if (!filename) return;
                 try {
                     const token = localStorage.getItem('baka_token');
-                    const res = await fetch(`${API_BASE}/cancel`, {
+                    const res = await apiFetch(`${API_BASE}/cancel`, {
                         method: 'POST',
                         headers: { 'Authorization': `Bearer ${token}` },
-                        body: JSON.stringify({ filename })
+                        body: JSON.stringify({ filename, job_id: task.jobId })
                     });
                     if (res.ok) {
                         delete progressData.value[taskId];
@@ -1338,6 +1379,8 @@ createApp({
         };
 
         const operationBusy = ref(false);
+        let pendingMutation = null;
+        const mutationId = (payload) => { const key = JSON.stringify([showRenameModal.value, showCopyModal.value, showDeleteConfirm.value, showMkdirModal.value, payload]); if (pendingMutation?.key !== key) pendingMutation = { key, id: crypto.randomUUID() }; return pendingMutation.id; };
         const confirmRename = async () => {
             if (!renameName.value.trim()) return;
             const src = getItemPath(opsTarget.value);
@@ -1345,15 +1388,16 @@ createApp({
             if (operationBusy.value) return;
             operationBusy.value = true;
             try {
-                const res = await fetch(`${API_BASE}/rename`, {
+                const res = await apiFetch(`${API_BASE}/rename`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ path: src, dst })
+                    body: JSON.stringify({ path: src, dst, operation_id: mutationId({ path: src, dst }) })
                 });
                 if (!res.ok) throw new Error(await res.text());
+                pendingMutation = null;
                 showRenameModal.value = false;
                 refreshAfterWrite();
             } catch (e) {
@@ -1370,15 +1414,16 @@ createApp({
             if (operationBusy.value) return;
             operationBusy.value = true;
             try {
-                const res = await fetch(`${API_BASE}/copy`, {
+                const res = await apiFetch(`${API_BASE}/copy`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ path: src, dst })
+                    body: JSON.stringify({ path: src, dst, operation_id: mutationId({ path: src, dst }) })
                 });
                 if (!res.ok) throw new Error(await res.text());
+                pendingMutation = null;
                 showCopyModal.value = false;
                 refreshAfterWrite();
             } catch (e) {
@@ -1393,15 +1438,16 @@ createApp({
             if (operationBusy.value) return;
             operationBusy.value = true;
             try {
-                const res = await fetch(`${API_BASE}/delete`, {
+                const res = await apiFetch(`${API_BASE}/delete`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ path: src })
+                    body: JSON.stringify({ path: src, operation_id: mutationId({ path: src }) })
                 });
                 if (!res.ok) throw new Error(await res.text());
+                pendingMutation = null;
                 showDeleteConfirm.value = false;
                 refreshAfterWrite();
             } catch (e) {
@@ -1425,15 +1471,16 @@ createApp({
             if (operationBusy.value) return;
             operationBusy.value = true;
             try {
-                const res = await fetch(`${API_BASE}/mkdir`, {
+                const res = await apiFetch(`${API_BASE}/mkdir`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${localStorage.getItem('baka_token')}`,
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ path: dst })
+                    body: JSON.stringify({ path: dst, operation_id: mutationId({ path: dst }) })
                 });
                 if (!res.ok) throw new Error(await res.text());
+                pendingMutation = null;
                 showMkdirModal.value = false;
                 refreshAfterWrite();
             } catch (e) {
@@ -1451,6 +1498,7 @@ createApp({
                 const config = await res.json();
                 authMode.value = !!config.auth_mode;
                 mangaMode.value = !!config.manga_mode;
+                cloudMode.value = config.storage_mode === 'kodo';
             } catch (_) {
                 // 配置都拉不到也不慌：下面 loadLevel 若撞 401 会由 handleAuthRequired 纠正 authMode。
             }
@@ -1489,7 +1537,7 @@ createApp({
             closeViewer, viewerPrev, viewerNext,
             onViewerTouchStart, onViewerTouchEnd,
             classifyFile, fileTypeIcon, getFileExt,
-            thumbMap, isImageFile,
+            thumbMap, onThumbError, isImageFile,
             // 搜索
             searchQuery, isSearching, searchTreeLoading, searchResults, searchPosters, searchFlat, searchCoverMap, searchMeta, searchBookTitle, resultPath, goToSearchResult, clearSearch,
             // 漫画版渲染
